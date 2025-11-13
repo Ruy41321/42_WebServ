@@ -1,0 +1,77 @@
+WEBSERV PROJECT REQUIREMENTS
+================================================================================
+
+
+1. ______ Your program must use a configuration file, provided as an argument 
+           on the command line, or available in a default path.
+
+2. ______ You cannot execve another web server.
+
+3. ______ Your server must remain non-blocking at all times and properly handle 
+           client disconnections when necessary.
+
+4. ______ It must be non-blocking and use only 1 poll() (or equivalent) for all 
+           the I/O operations between the clients and the server (listen included).
+
+5. ______ poll() (or equivalent) must monitor both reading and writing 
+           simultaneously.
+
+6. ______ You must never do a read or a write operation without going through 
+           poll() (or equivalent).
+
+7. ______ Checking the value of errno to adjust the server behaviour is strictly 
+           forbidden after performing a read or write operation.
+
+8. ______ You are not required to use poll() (or an equivalent function) for 
+           regular disk files; read() and write() on them do not require readiness 
+           notifications.
+
+9. ______ When using poll() or any equivalent call, you can use every associated 
+           macro or helper function (e.g., FD_SET for select()).
+
+10. _____ A request to your server should never hang indefinitely.
+
+11. _____ Your server must be compatible with standard web browsers of your 
+           choice.
+
+12. _____ NGINX may be used to compare headers and answer behaviours (pay 
+           attention to differences between HTTP versions).
+
+13. _____ Your HTTP response status codes must be accurate.
+
+14. _____ Your server must have default error pages if none are provided.
+
+15. _____ You can't use fork for anything other than CGI (like PHP, or Python, 
+           and so forth).
+
+16. _____ You must be able to serve a fully static website.
+
+17. _____ Clients must be able to upload files.
+
+18. _____ You need at least the GET, POST, and DELETE methods.
+
+19. _____ Stress test your server to ensure it remains available at all times.
+
+20. _____ Your server must be able to listen to multiple ports to deliver 
+           different content (see Configuration file).
+
+21. _____ In the configuration file, you should be able to define all the 
+           interface:port pairs on which your server will listen to (defining 
+           multiple websites served by your program).
+
+22. _____ Set up default error pages in configuration file.
+
+23. _____ Set the maximum allowed size for client request bodies in 
+           configuration file.
+
+24. _____ Specify rules or configurations on a URL/route for a website:
+           - List of accepted HTTP methods for the route
+           - HTTP redirection
+           - Directory where the requested file should be located
+           - Enabling or disabling directory listing
+           - Default file to serve when the requested resource is a directory
+           - Uploading files from the clients to the server is authorized, 
+             and storage location is provided
+           - Execution of CGI, based on file extension
+
+================================================================================
