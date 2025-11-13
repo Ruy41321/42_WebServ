@@ -16,24 +16,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/select.h>
-
-class Config {
-private:
-    int port;
-    std::string host;
-    std::string root;
-    std::string index;
-    
-public:
-    Config();
-    ~Config();
-    
-    bool loadFromFile(const std::string& filename);
-    int getPort() const;
-    std::string getHost() const;
-    std::string getRoot() const;
-    std::string getIndex() const;
-};
+#include "Config.hpp"
 
 class WebServer {
 private:
