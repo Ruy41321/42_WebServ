@@ -2,36 +2,36 @@ WEBSERV PROJECT REQUIREMENTS
 ================================================================================
 
 
-1. ______ Your program must use a configuration file, provided as an argument 
+1. ___Fatto___ Your program must use a configuration file, provided as an argument 
            on the command line, or available in a default path.
 
 2. ______ You cannot execve another web server.
 
-3. ______ Your server must remain non-blocking at all times and properly handle 
+3. ___Fatto___ Your server must remain non-blocking at all times and properly handle 
            client disconnections when necessary.
 
-4. ______ It must be non-blocking and use only 1 poll() (or equivalent) for all 
+4. ___Fatto___ It must be non-blocking and use only 1 poll() (or equivalent) for all 
            the I/O operations between the clients and the server (listen included).
 
-5. ______ poll() (or equivalent) must monitor both reading and writing 
+5. ___Fatto___ poll() (or equivalent) must monitor both reading and writing 
            simultaneously.
 
-6. ______ You must never do a read or a write operation without going through 
+6. ___Fatto___ You must never do a read or a write operation without going through 
            poll() (or equivalent).
 
-7. ______ Checking the value of errno to adjust the server behaviour is strictly 
+7. ____Fatto__ Checking the value of errno to adjust the server behaviour is strictly 
            forbidden after performing a read or write operation.
 
-8. ______ You are not required to use poll() (or an equivalent function) for 
+8. _____Fatto_ You are not required to use poll() (or an equivalent function) for 
            regular disk files; read() and write() on them do not require readiness 
            notifications.
 
-9. ______ When using poll() or any equivalent call, you can use every associated 
+9. ___Fatto___ When using poll() or any equivalent call, you can use every associated 
            macro or helper function (e.g., FD_SET for select()).
 
-10. _____ A request to your server should never hang indefinitely.
+10. __Testare___ A request to your server should never hang indefinitely.
 
-11. _____ Your server must be compatible with standard web browsers of your 
+11. __Fatto___ Your server must be compatible with standard web browsers of your 
            choice.
 
 12. _____ NGINX may be used to compare headers and answer behaviours (pay 
@@ -44,7 +44,7 @@ WEBSERV PROJECT REQUIREMENTS
 15. _____ You can't use fork for anything other than CGI (like PHP, or Python, 
            and so forth).
 
-16. _____ You must be able to serve a fully static website.
+16. __Fatto___ You must be able to serve a fully static website.
 
 17. _____ Clients must be able to upload files.
 
