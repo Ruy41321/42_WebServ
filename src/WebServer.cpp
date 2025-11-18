@@ -1,11 +1,14 @@
 #include "../include/WebServer.hpp"
 
-WebServer::WebServer() : serverSocket(-1), epollFd(-1), running(false) {
+WebServer::WebServer() : serverSocket(-1), epollFd(-1), running(false), 
+                         connManager(NULL), httpHandler(NULL) {
     std::memset(&serverAddr, 0, sizeof(serverAddr));
 }
 
 WebServer::~WebServer() {
     stop();
+    delete connManager;
+    delete httpHandler;
 }
 
 bool WebServer::initialize(const std::string& configFile) {
@@ -16,6 +19,10 @@ bool WebServer::initialize(const std::string& configFile) {
     try {
         setupSocket();
         setupEpoll();
+        
+        // Initialize managers after epoll is created
+        connManager = new ConnectionManager(epollFd);
+        httpHandler = new HttpRequest(config);
     } catch (const std::exception& e) {
         std::cerr << "Error initializing server: " << e.what() << std::endl;
         return false;
@@ -130,7 +137,7 @@ void WebServer::run() {
             if (activeEvents & (EPOLLERR | EPOLLHUP)) {
                 std::cerr << "Error/Hangup on FD " << fd << std::endl;
                 if (fd != serverSocket)
-                    closeClient(fd);
+                    connManager->removeClient(fd);
                 continue;
             }
 
@@ -141,7 +148,7 @@ void WebServer::run() {
                 // Check peer disconnect
                 if (activeEvents & EPOLLRDHUP) {
                     std::cout << "Client " << fd << " disconnected" << std::endl;
-                    closeClient(fd);
+                    connManager->removeClient(fd);
                     continue;
                 }
                 
@@ -205,34 +212,17 @@ void WebServer::handleNewConnection() {
     char clientIP[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, INET_ADDRSTRLEN);
     
-    // Create ClientConnection object
-    ClientConnection* client = new ClientConnection(clientSocket);
-    clients.push_back(client);
+    // Add client to connection manager
+    connManager->addClient(clientSocket);
     
     std::cout << "New connection from " << clientIP 
               << ":" << ntohs(clientAddr.sin_port) 
               << " on socket " << clientSocket << std::endl;
 }
 
-void WebServer::closeClient(int clientSocket) {
-    epoll_ctl(epollFd, EPOLL_CTL_DEL, clientSocket, NULL);
-    close(clientSocket);
-    
-    // Remove from clients vector and free memory
-    for (std::vector<ClientConnection*>::iterator it = clients.begin(); it != clients.end(); ++it) {
-        if ((*it)->fd == clientSocket) {
-            delete *it;
-            clients.erase(it);
-            break;
-        }
-    }
-    
-    std::cout << "Closed connection on socket " << clientSocket << std::endl;
-}
-
 void WebServer::handleClientRead(int clientSocket) {
     // Find client connection
-    ClientConnection* client = findClient(clientSocket);
+    ClientConnection* client = connManager->findClient(clientSocket);
     if (!client) {
         std::cerr << "Client not found: " << clientSocket << std::endl;
         return;
@@ -246,85 +236,46 @@ void WebServer::handleClientRead(int clientSocket) {
     // Check return value only (no errno checks)
     if (bytesRead < 0) {
         // Error occurred (including EAGAIN/EWOULDBLOCK)
-        closeClient(clientSocket);
+        connManager->removeClient(clientSocket);
         return;
     }
     
     if (bytesRead == 0) {
         // Client closed connection
         std::cout << "Client " << clientSocket << " closed connection" << std::endl;
-        closeClient(clientSocket);
+        connManager->removeClient(clientSocket);
         return;
     }
     
     // Append received data to request buffer
     client->requestBuffer.append(buffer, bytesRead);
     
-    // Check if we have received complete HTTP headers (\r\n\r\n marks end of headers)
-    size_t headerEnd = client->requestBuffer.find("\r\n\r\n");
-    if (headerEnd == std::string::npos) {
-        // Headers not complete yet, wait for more data
-        return;
-    }
+    // Handle the HTTP request
+    httpHandler->handleRequest(client);
     
-    // Extract headers
-    std::string headers = client->requestBuffer.substr(0, headerEnd);
-    size_t bodyStart = headerEnd + 4;  // Skip \r\n\r\n
-    
-    // Parse request line (first line)
-    std::istringstream iss(headers);
-    std::string method, path, version;
-    iss >> method >> path >> version;
-    
-    std::cout << "Request: " << method << " " << path << " " << version << std::endl;
-    
-    // Identify method using switch (convert to enum-like)
-    int methodType = 0;  // 0=unknown, 1=GET, 2=POST, 3=DELETE
-    if (method == "GET") methodType = 1;
-    else if (method == "POST") methodType = 2;
-    else if (method == "DELETE") methodType = 3;
-    
-    switch (methodType) {
-        case 1:  // GET
-            handleGetRequest(client, path);
-            break;
-            
-        case 2:  // POST
-            handlePostRequest(client, path, headers, bodyStart);
-            break;
-            
-        case 3:  // DELETE
-            handleDeleteRequest(client, path);
-            break;
-            
-        default:  // Unknown method
-            client->responseBuffer = "HTTP/1.0 501 Not Implemented\r\n"
-                                     "Content-Type: text/html\r\n"
-                                     "Content-Length: 58\r\n"
-                                     "\r\n"
-                                     "<html><body><h1>501 Not Implemented</h1></body></html>";
-            prepareResponse(client);
-            break;
+    // If response is ready, prepare for sending
+    if (!client->responseBuffer.empty()) {
+        connManager->prepareResponseMode(client);
     }
 }
 
 void WebServer::handleClientWrite(int clientSocket) {
     // Find client connection
-    ClientConnection* client = findClient(clientSocket);
+    ClientConnection* client = connManager->findClient(clientSocket);
     if (!client) {
         std::cerr << "Client not found: " << clientSocket << std::endl;
         return;
     }
     
     // Check if there's data to send
-    if (client->responseBuffer.empty() || client->bytesSent >= client->responseBuffer.length()) {
+    if (client->isResponseComplete()) {
         // Nothing to send, close connection (HTTP/1.0 behavior)
-        closeClient(clientSocket);
+        connManager->removeClient(clientSocket);
         return;
     }
     
     // Send remaining data
-    size_t remaining = client->responseBuffer.length() - client->bytesSent;
+    size_t remaining = client->getRemainingBytes();
     ssize_t sent = send(clientSocket, 
                        client->responseBuffer.c_str() + client->bytesSent, 
                        remaining, 
@@ -333,180 +284,19 @@ void WebServer::handleClientWrite(int clientSocket) {
     // Check return value only (no errno checks)
     if (sent < 0) {
         // Error occurred
-        closeClient(clientSocket);
+        connManager->removeClient(clientSocket);
         return;
     }
     
     client->bytesSent += sent;
     
     // Check if all data has been sent
-    if (client->bytesSent >= client->responseBuffer.length()) {
+    if (client->isResponseComplete()) {
         // Response complete, close connection (HTTP/1.0 default)
         std::cout << "Response sent completely to socket " << clientSocket << std::endl;
-        closeClient(clientSocket);
+        connManager->removeClient(clientSocket);
     }
     // If not complete, EPOLLOUT will trigger again when socket is ready
-}
-
-// Helper function to find client by fd
-ClientConnection* WebServer::findClient(int fd) {
-    for (size_t i = 0; i < clients.size(); ++i) {
-        if (clients[i]->fd == fd) {
-            return clients[i];
-        }
-    }
-    return NULL;
-}
-
-// Prepare response for sending by adding EPOLLOUT to epoll
-void WebServer::prepareResponse(ClientConnection* client) {
-    // Modify epoll to monitor for write events
-    struct epoll_event ev;
-    ev.events = EPOLLOUT | EPOLLRDHUP;
-    ev.data.fd = client->fd;
-    
-    if (epoll_ctl(epollFd, EPOLL_CTL_MOD, client->fd, &ev) < 0) {
-        std::cerr << "Failed to modify epoll for writing: " << strerror(errno) << std::endl;
-        closeClient(client->fd);
-    }
-}
-
-// Handle GET request
-void WebServer::handleGetRequest(ClientConnection* client, const std::string& path) {
-    // Determine the file path
-    std::string requestPath = path;
-    
-    // If path is just "/", use index file
-    if (requestPath == "/") {
-        requestPath = "/" + config.getIndex();
-    }
-    
-    // Build full file path
-    std::string fullPath = config.getRoot() + requestPath;
-    
-    // Try to open the file
-    std::ifstream file(fullPath.c_str(), std::ios::binary);
-    
-    if (!file.is_open()) {
-        // File not found - 404 response
-        std::string content = "<html><body><h1>404 Not Found</h1><p>The requested resource was not found.</p></body></html>";
-        std::ostringstream oss;
-        oss << "HTTP/1.0 404 Not Found\r\n"
-            << "Content-Type: text/html\r\n"
-            << "Content-Length: " << content.length() << "\r\n"
-            << "\r\n"
-            << content;
-        client->responseBuffer = oss.str();
-        prepareResponse(client);
-        return;
-    }
-    
-    // Read file content
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string content = buffer.str();
-    file.close();
-    
-    // Determine Content-Type based on file extension
-    std::string contentType = "text/html";
-    size_t dotPos = fullPath.find_last_of('.');
-    if (dotPos != std::string::npos) {
-        std::string extension = fullPath.substr(dotPos);
-        if (extension == ".html" || extension == ".htm") {
-            contentType = "text/html";
-        } else if (extension == ".css") {
-            contentType = "text/css";
-        } else if (extension == ".js") {
-            contentType = "application/javascript";
-        } else if (extension == ".jpg" || extension == ".jpeg") {
-            contentType = "image/jpeg";
-        } else if (extension == ".png") {
-            contentType = "image/png";
-        } else if (extension == ".gif") {
-            contentType = "image/gif";
-        } else if (extension == ".txt") {
-            contentType = "text/plain";
-        } else if (extension == ".json") {
-            contentType = "application/json";
-        } else if (extension == ".xml") {
-            contentType = "application/xml";
-        } else {
-            contentType = "application/octet-stream";
-        }
-    }
-    
-    // Generate HTTP 200 OK response
-    std::ostringstream oss;
-    oss << "HTTP/1.0 200 OK\r\n"
-        << "Content-Type: " << contentType << "\r\n"
-        << "Content-Length: " << content.length() << "\r\n"
-        << "\r\n"
-        << content;
-    
-    client->responseBuffer = oss.str();
-    prepareResponse(client);
-}
-
-// Handle POST request
-void WebServer::handlePostRequest(ClientConnection* client, const std::string& path, 
-                                  const std::string& headers, size_t bodyStart) {
-    (void)path;  // Suppress unused parameter warning
-    
-    // Look for Content-Length header
-    size_t contentLengthPos = headers.find("Content-Length:");
-    if (contentLengthPos == std::string::npos) {
-        contentLengthPos = headers.find("content-length:");
-    }
-    
-    if (contentLengthPos != std::string::npos) {
-        // Extract Content-Length value
-        size_t valueStart = headers.find_first_not_of(" \t", contentLengthPos + 15);
-        size_t valueEnd = headers.find("\r\n", valueStart);
-        std::string lengthStr = headers.substr(valueStart, valueEnd - valueStart);
-        size_t contentLength = std::atoi(lengthStr.c_str());
-        
-        size_t bodyReceived = client->requestBuffer.length() - bodyStart;
-        
-        if (bodyReceived < contentLength) {
-            // Body not complete yet, wait for more data
-            std::cout << "POST body incomplete: " << bodyReceived 
-                      << "/" << contentLength << " bytes received" << std::endl;
-            return;
-        }
-        
-        // Complete POST request received
-        std::cout << "POST request complete (" << contentLength << " bytes)" << std::endl;
-        
-        // TODO: Handle POST request properly (file upload, etc.)
-        client->responseBuffer = "HTTP/1.0 200 OK\r\n"
-                                 "Content-Type: text/html\r\n"
-                                 "Content-Length: 51\r\n"
-                                 "\r\n"
-                                 "<html><body><h1>POST received</h1></body></html>";
-        prepareResponse(client);
-        return;
-    }
-    
-    // No Content-Length header
-    client->responseBuffer = "HTTP/1.0 411 Length Required\r\n"
-                             "Content-Type: text/html\r\n"
-                             "Content-Length: 57\r\n"
-                             "\r\n"
-                             "<html><body><h1>411 Length Required</h1></body></html>";
-    prepareResponse(client);
-}
-
-// Handle DELETE request
-void WebServer::handleDeleteRequest(ClientConnection* client, const std::string& path) {
-    (void)path;  // Suppress unused parameter warning
-    
-    // TODO: Implement DELETE functionality
-    client->responseBuffer = "HTTP/1.0 200 OK\r\n"
-                             "Content-Type: text/html\r\n"
-                             "Content-Length: 54\r\n"
-                             "\r\n"
-                             "<html><body><h1>DELETE received</h1></body></html>";
-    prepareResponse(client);
 }
 
 void WebServer::stop() {
@@ -515,22 +305,19 @@ void WebServer::stop() {
     running = false;
     
     if (serverSocket >= 0) {
-        // ✅ Rimuovi server socket da epoll (non accettare nuove connessioni)
+        // Remove server socket from epoll
         epoll_ctl(epollFd, EPOLL_CTL_DEL, serverSocket, NULL);
         
-        // ✅ Chiudi server socket (rifiuta nuove connessioni)
+        // Close server socket
         close(serverSocket);
         serverSocket = -1;
         std::cout << "Server socket closed (no new connections)" << std::endl;
     }
 
     // Close all client sockets
-    for (size_t i = 0; i < clients.size(); ++i) {
-        epoll_ctl(epollFd, EPOLL_CTL_DEL, clients[i]->fd, NULL);
-        close(clients[i]->fd);
-        delete clients[i];
+    if (connManager) {
+        connManager->closeAllClients();
     }
-    clients.clear();
     
     if (epollFd >= 0) {
         close(epollFd);

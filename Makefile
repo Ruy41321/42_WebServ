@@ -10,7 +10,11 @@ OBJDIR = obj
 
 SRCS = $(SRCDIR)/main.cpp \
        $(SRCDIR)/WebServer.cpp \
-       $(SRCDIR)/Config.cpp
+       $(SRCDIR)/Config.cpp \
+       $(SRCDIR)/ClientConnection.cpp \
+       $(SRCDIR)/ConnectionManager.cpp \
+       $(SRCDIR)/HttpRequest.cpp \
+       $(SRCDIR)/HttpResponse.cpp
 
 OBJS = $(SRCS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
 
@@ -28,6 +32,14 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.cpp
 
 run: $(NAME)
 	./$(NAME) config/default.conf
+
+# Debug build with debugging symbols
+debug: CXXFLAGS += -g -DDEBUG
+debug: fclean $(NAME)
+
+# Run with debugger
+debug_run: debug
+	gdb --args ./$(NAME) config/default.conf
 
 # Build test configuration parser
 build_test: $(TEST_CONFIG)
