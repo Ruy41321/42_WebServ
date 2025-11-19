@@ -35,6 +35,55 @@ std::string HttpResponse::build411() {
     return oss.str();
 }
 
+std::string HttpResponse::build201(const std::string& body) {
+    std::ostringstream oss;
+    oss << "HTTP/1.0 201 Created\r\n"
+        << "Content-Type: text/html\r\n"
+        << "Content-Length: " << body.length() << "\r\n"
+        << "\r\n"
+        << body;
+    return oss.str();
+}
+
+std::string HttpResponse::build403(const std::string& message) {
+    std::ostringstream bodyStream;
+    bodyStream << "<html><body><h1>403 Forbidden</h1><p>" << message << "</p></body></html>";
+    std::string body = bodyStream.str();
+    
+    std::ostringstream oss;
+    oss << "HTTP/1.0 403 Forbidden\r\n"
+        << "Content-Type: text/html\r\n"
+        << "Content-Length: " << body.length() << "\r\n"
+        << "\r\n"
+        << body;
+    return oss.str();
+}
+
+std::string HttpResponse::build413() {
+    std::string body = "<html><body><h1>413 Request Entity Too Large</h1></body></html>";
+    std::ostringstream oss;
+    oss << "HTTP/1.0 413 Request Entity Too Large\r\n"
+        << "Content-Type: text/html\r\n"
+        << "Content-Length: " << body.length() << "\r\n"
+        << "\r\n"
+        << body;
+    return oss.str();
+}
+
+std::string HttpResponse::build500(const std::string& message) {
+    std::ostringstream bodyStream;
+    bodyStream << "<html><body><h1>500 Internal Server Error</h1><p>" << message << "</p></body></html>";
+    std::string body = bodyStream.str();
+    
+    std::ostringstream oss;
+    oss << "HTTP/1.0 500 Internal Server Error\r\n"
+        << "Content-Type: text/html\r\n"
+        << "Content-Length: " << body.length() << "\r\n"
+        << "\r\n"
+        << body;
+    return oss.str();
+}
+
 std::string HttpResponse::build200(const std::string& contentType, const std::string& body) {
     std::ostringstream oss;
     oss << "HTTP/1.0 200 OK\r\n"

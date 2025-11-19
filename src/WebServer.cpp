@@ -91,7 +91,7 @@ void WebServer::setupEpoll() {
     
     // Add server socket to epoll
     struct epoll_event ev;
-    ev.events = EPOLLIN | EPOLLET;  // Monitor for read events
+    ev.events = EPOLLIN;  // Monitor for read events (level-triggered)
     ev.data.fd = serverSocket;
     
     if (epoll_ctl(epollFd, EPOLL_CTL_ADD, serverSocket, &ev) < 0) {

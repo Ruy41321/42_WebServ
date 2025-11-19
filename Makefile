@@ -51,6 +51,11 @@ $(TEST_CONFIG): $(TEST_SRCS)
 test_config: build_test
 	./$(TEST_CONFIG) config/default.conf
 
+# Run automated test suite
+test: $(NAME)
+	@echo "Running automated tests..."
+	@$(TESTDIR)/test_server.sh
+
 clean:
 	rm -rf $(OBJDIR)
 
@@ -60,4 +65,4 @@ fclean: clean
 
 re: fclean all
 
-.PHONY: all clean fclean re run build_test test_config
+.PHONY: all clean fclean re run build_test test_config test

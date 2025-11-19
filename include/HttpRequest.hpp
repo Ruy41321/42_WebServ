@@ -9,6 +9,18 @@ class HttpRequest {
 private:
     Config& config;
     
+    // Helper methods for POST handling
+    bool getContentLength(const std::string& headers, size_t& contentLength);
+    bool isUploadRequest(const std::string& headers);
+    bool findUploadLocation(const std::string& path, std::string& uploadDir);
+    std::string extractFilename(const std::string& headers);
+    bool saveUploadedFile(const std::string& fullPath, const std::string& body);
+    
+    void handlePostUpload(ClientConnection* client, const std::string& path,
+                         const std::string& headers, size_t bodyStart);
+    void handlePostData(ClientConnection* client, const std::string& path,
+                       const std::string& headers, size_t bodyStart);
+    
 public:
     HttpRequest(Config& cfg);
     
