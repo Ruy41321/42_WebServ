@@ -14,7 +14,7 @@ public:
     ConnectionManager(int epoll_fd);
     ~ConnectionManager();
     
-    void addClient(int clientSocket);
+    void addClient(int clientSocket, size_t serverIndex);
     void removeClient(int clientSocket);
     ClientConnection* findClient(int fd);
     void closeAllClients();

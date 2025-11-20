@@ -5,6 +5,8 @@
 #include <iostream>
 #include <cstring>
 #include <cerrno>
+#include <vector>
+#include <map>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -15,22 +17,33 @@
 #include "ConnectionManager.hpp"
 #include "HttpRequest.hpp"
 
+// Structure to hold server socket information
+struct ServerSocket {
+    int fd;                     // Socket file descriptor
+    std::string host;           // Host/interface
+    int port;                   // Port number
+    size_t serverIndex;         // Index in config.servers[]
+    
+    ServerSocket() : fd(-1), port(0), serverIndex(0) {}
+};
+
 class WebServer {
 private:
     Config config;
-    int serverSocket;
+    std::vector<ServerSocket> serverSockets;  // Multiple server sockets
+    std::map<int, size_t> fdToServerIndex;    // Map socket FD to server config index
     int epollFd;
-    struct sockaddr_in serverAddr;
     bool running;
     
     ConnectionManager* connManager;
-    HttpRequest* httpHandler;
+    std::vector<HttpRequest*> httpHandlers;   // One handler per server config
     
-    void setupSocket();
+    bool setupServerSocket(const ServerConfig& serverConfig, size_t index);
     void setupEpoll();
-    void handleNewConnection();
+    void handleNewConnection(int serverFd);
     void handleClientRead(int clientSocket);
     void handleClientWrite(int clientSocket);
+    bool isDuplicateBinding(const std::string& host, int port) const;
     
 public:
     WebServer();

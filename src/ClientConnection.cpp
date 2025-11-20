@@ -1,6 +1,7 @@
 #include "../include/ClientConnection.hpp"
 
-ClientConnection::ClientConnection(int socket) : fd(socket), bytesSent(0) {
+ClientConnection::ClientConnection(int socket, size_t servIdx) 
+    : fd(socket), serverIndex(servIdx), bytesSent(0) {
 }
 
 ClientConnection::~ClientConnection() {

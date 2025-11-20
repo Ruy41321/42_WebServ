@@ -7,11 +7,12 @@
 class ClientConnection {
 public:
     int fd;
+    size_t serverIndex;         // Which server config this client belongs to
     std::string requestBuffer;
     std::string responseBuffer;
-    size_t bytesSent;  // Track how many bytes of response have been sent
+    size_t bytesSent;           // Track how many bytes of response have been sent
     
-    ClientConnection(int socket);
+    ClientConnection(int socket, size_t servIdx = 0);
     ~ClientConnection();
     
     void clearBuffers();

@@ -11,8 +11,8 @@ ConnectionManager::~ConnectionManager() {
     closeAllClients();
 }
 
-void ConnectionManager::addClient(int clientSocket) {
-    ClientConnection* client = new ClientConnection(clientSocket);
+void ConnectionManager::addClient(int clientSocket, size_t serverIndex) {
+    ClientConnection* client = new ClientConnection(clientSocket, serverIndex);
     clients.push_back(client);
 }
 

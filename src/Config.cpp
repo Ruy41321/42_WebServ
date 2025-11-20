@@ -68,6 +68,16 @@ bool Config::parseLocationBlock(std::ifstream& file, std::string& line, ServerCo
             continue;
         }
         
+        // Remove inline comments
+        size_t commentPos = line.find('#');
+        if (commentPos != std::string::npos) {
+            line = trim(line.substr(0, commentPos));
+        }
+        
+        if (line.empty()) {
+            continue;
+        }
+        
         if (line[0] == '}') {
             break;
         }
@@ -100,6 +110,7 @@ bool Config::parseLocationBlock(std::ifstream& file, std::string& line, ServerCo
         }
         else if (directive == "autoindex" && tokens.size() >= 2) {
             location.autoindex = (tokens[1] == "on");
+            location.hasAutoindex = true;
         }
         else if (directive == "upload_store" && tokens.size() >= 2) {
             location.uploadStore = tokens[1];
@@ -123,7 +134,12 @@ bool Config::parseLocationBlock(std::ifstream& file, std::string& line, ServerCo
             }
         }
         else if (directive == "client_max_body_size" && tokens.size() >= 2) {
-            location.clientMaxBodySize = std::atoi(tokens[1].c_str());
+            int bodySize = std::atoi(tokens[1].c_str());
+            if (bodySize <= 0) {
+                std::cerr << "Error: Invalid client_max_body_size " << bodySize << " (must be positive)" << std::endl;
+                return false;
+            }
+            location.clientMaxBodySize = bodySize;
         }
     }
     
@@ -143,8 +159,28 @@ bool Config::parseServerBlock(std::ifstream& file, std::string& line) {
             continue;
         }
         
+        // Remove inline comments
+        size_t commentPos = line.find('#');
+        if (commentPos != std::string::npos) {
+            line = trim(line.substr(0, commentPos));
+        }
+        
+        if (line.empty()) {
+            continue;
+        }
+        
         if (line[0] == '}') {
             break;
+        }
+        
+        // Check for syntax: directives should end with semicolon (except blocks)
+        if (line.find("location") == std::string::npos && 
+            line.find('{') == std::string::npos && 
+            line.find('}') == std::string::npos) {
+            if (line[line.length() - 1] != ';') {
+                std::cerr << "Error: Missing semicolon after directive: " << line << std::endl;
+                return false;
+            }
         }
         
         // Check for location block
@@ -178,6 +214,12 @@ bool Config::parseServerBlock(std::ifstream& file, std::string& line) {
             } else {
                 server.port = std::atoi(listenValue.c_str());
             }
+            
+            // Validate port range (1-65535)
+            if (server.port < 1 || server.port > 65535) {
+                std::cerr << "Error: Invalid port number " << server.port << " (must be 1-65535)" << std::endl;
+                return false;
+            }
         }
         else if (directive == "root" && tokens.size() >= 2) {
             server.root = tokens[1];
@@ -189,7 +231,12 @@ bool Config::parseServerBlock(std::ifstream& file, std::string& line) {
             server.autoindex = (tokens[1] == "on");
         }
         else if (directive == "client_max_body_size" && tokens.size() >= 2) {
-            server.clientMaxBodySize = std::atoi(tokens[1].c_str());
+            int bodySize = std::atoi(tokens[1].c_str());
+            if (bodySize <= 0) {
+                std::cerr << "Error: Invalid client_max_body_size " << bodySize << " (must be positive)" << std::endl;
+                return false;
+            }
+            server.clientMaxBodySize = bodySize;
         }
         else if (directive == "error_page" && tokens.size() >= 3) {
             // Parse error_page: "error_page 404 /errors/404.html"

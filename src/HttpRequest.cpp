@@ -49,6 +49,60 @@ void HttpRequest::handleRequest(ClientConnection* client) {
     
     std::cout << "Request: " << method << " " << path << " " << version << std::endl;
     
+    // Validate request line format (must have method, path, and HTTP version)
+    if (method.empty() || path.empty() || version.empty()) {
+        const ServerConfig& server = config.getServer(client->serverIndex);
+        client->responseBuffer = HttpResponse::build400(&server);
+        return;
+    }
+    
+    // Validate HTTP version format
+    if (version.find("HTTP/") != 0) {
+        const ServerConfig& server = config.getServer(client->serverIndex);
+        client->responseBuffer = HttpResponse::build400(&server);
+        return;
+    }
+    
+    // Check for redirect first
+    std::string redirectUrl;
+    int statusCode;
+    if (checkRedirect(path, client->serverIndex, redirectUrl, statusCode)) {
+        if (statusCode == 301) {
+            client->responseBuffer = HttpResponse::build301(redirectUrl);
+        } else if (statusCode == 302) {
+            client->responseBuffer = HttpResponse::build302(redirectUrl);
+        }
+        return;
+    }
+    
+    // Check if method is implemented
+    if (method != "GET" && method != "POST" && method != "DELETE") {
+        const ServerConfig& server = config.getServer(client->serverIndex);
+        client->responseBuffer = HttpResponse::build501(&server);
+        return;
+    }
+    
+    // Check if method is allowed for this location
+    if (!isMethodAllowed(method, path, client->serverIndex)) {
+        const ServerConfig& server = config.getServer(client->serverIndex);
+        client->responseBuffer = HttpResponse::build405(&server);
+        return;
+    }
+    
+    // For POST/PUT requests, check Content-Length against max body size EARLY
+    if (method == "POST") {
+        size_t contentLength;
+        if (getContentLength(headers, contentLength)) {
+            const ServerConfig& server = config.getServer(client->serverIndex);
+            if (contentLength > server.clientMaxBodySize) {
+                std::cout << "Body size " << contentLength << " exceeds limit " 
+                          << server.clientMaxBodySize << std::endl;
+                client->responseBuffer = HttpResponse::build413(&server);
+                return;
+            }
+        }
+    }
+    
     // Route to appropriate handler
     if (method == "GET") {
         handleGet(client, path);
@@ -56,25 +110,82 @@ void HttpRequest::handleRequest(ClientConnection* client) {
         handlePost(client, path, headers, bodyStart);
     } else if (method == "DELETE") {
         handleDelete(client, path);
-    } else {
-        client->responseBuffer = HttpResponse::build501();
     }
 }
 
 void HttpRequest::handleGet(ClientConnection* client, const std::string& path) {
-    // Determine the file path
-    std::string requestPath = path;
+    // Get the server config for this client
+    const ServerConfig& server = config.getServer(client->serverIndex);
     
-    // If path is just "/", use index file
-    if (requestPath == "/") {
-        requestPath = "/" + config.getIndex();
+    // Find the best matching location for this path
+    const LocationConfig* bestMatch = NULL;
+    size_t bestMatchLength = 0;
+    
+    for (size_t i = 0; i < server.locations.size(); ++i) {
+        const LocationConfig& loc = server.locations[i];
+        if (path.find(loc.path) == 0) {
+            size_t matchLength = loc.path.length();
+            if (matchLength > bestMatchLength) {
+                bestMatchLength = matchLength;
+                bestMatch = &loc;
+            }
+        }
+    }
+    
+    // Determine root and autoindex settings
+    std::string root = server.root;
+    bool autoindex = server.autoindex;
+    std::string indexFile = server.index;
+    
+    if (bestMatch) {
+        if (!bestMatch->root.empty()) {
+            root = bestMatch->root;
+        }
+        if (bestMatch->hasAutoindex) {
+            autoindex = bestMatch->autoindex;
+        }
+        if (!bestMatch->index.empty()) {
+            indexFile = bestMatch->index;
+        }
     }
     
     // Build full file path
-    std::string fullPath = config.getRoot() + requestPath;
+    std::string fullPath = root + path;
     
-    // Generate response
-    client->responseBuffer = HttpResponse::buildFileResponse(fullPath);
+    // Check if path is a directory
+    struct stat pathStat;
+    if (stat(fullPath.c_str(), &pathStat) == 0) {
+        if (S_ISDIR(pathStat.st_mode)) {
+            // It's a directory - try index file first
+            std::string indexPath = fullPath;
+            if (indexPath[indexPath.length() - 1] != '/') {
+                indexPath += "/";
+            }
+            indexPath += indexFile;
+            
+            // Check if index file exists
+            struct stat indexStat;
+            if (stat(indexPath.c_str(), &indexStat) == 0 && S_ISREG(indexStat.st_mode)) {
+                // Index file exists, serve it
+                client->responseBuffer = HttpResponse::buildFileResponse(indexPath, &server);
+                return;
+            }
+            
+            // No index file - check autoindex
+            if (autoindex) {
+                // Generate directory listing
+                client->responseBuffer = HttpResponse::buildDirectoryListing(fullPath, path);
+                return;
+            } else {
+                // Autoindex disabled, return 403
+                client->responseBuffer = HttpResponse::build403("Directory listing is disabled.", &server);
+                return;
+            }
+        }
+    }
+    
+    // It's a file or doesn't exist - try to serve it
+    client->responseBuffer = HttpResponse::buildFileResponse(fullPath, &server);
 }
 
 // Helper: Extract Content-Length from headers
@@ -93,6 +204,60 @@ bool HttpRequest::getContentLength(const std::string& headers, size_t& contentLe
     std::string lengthStr = headers.substr(valueStart, valueEnd - valueStart);
     contentLength = std::atoi(lengthStr.c_str());
     return true;
+}
+
+// Helper: Check if method is allowed for this path/location
+bool HttpRequest::isMethodAllowed(const std::string& method, const std::string& path, size_t serverIndex) {
+    const ServerConfig& server = config.getServer(serverIndex);
+    const LocationConfig* bestMatch = NULL;
+    size_t bestMatchLength = 0;
+    
+    // Find the most specific location match
+    for (size_t i = 0; i < server.locations.size(); ++i) {
+        const LocationConfig& loc = server.locations[i];
+        
+        if (path.find(loc.path) == 0) {
+            size_t matchLength = loc.path.length();
+            if (matchLength > bestMatchLength) {
+                bestMatchLength = matchLength;
+                bestMatch = &loc;
+            }
+        }
+    }
+    
+    // If no location match, allow by default
+    if (!bestMatch) {
+        return true;
+    }
+    
+    // Check if method is in allowed list
+    for (size_t i = 0; i < bestMatch->allowMethods.size(); ++i) {
+        if (bestMatch->allowMethods[i] == method) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// Helper: Check for redirect configuration
+bool HttpRequest::checkRedirect(const std::string& path, size_t serverIndex, std::string& redirectUrl, int& statusCode) {
+    const ServerConfig& server = config.getServer(serverIndex);
+    
+    // Check each location for redirect
+    for (size_t i = 0; i < server.locations.size(); ++i) {
+        const LocationConfig& loc = server.locations[i];
+        
+        // Exact path match for redirect
+        if (loc.path == path && !loc.redirect.empty()) {
+            // Parse redirect string (format: "301 /new-page" or "302 /")
+            std::istringstream iss(loc.redirect);
+            iss >> statusCode >> redirectUrl;
+            return true;
+        }
+    }
+    
+    return false;
 }
 
 // Helper: Check if request is a file upload based on Content-Type or Content-Disposition
@@ -125,8 +290,8 @@ bool HttpRequest::isUploadRequest(const std::string& headers) {
 }
 
 // Helper: Find upload directory for path
-bool HttpRequest::findUploadLocation(const std::string& path, std::string& uploadDir) {
-    const ServerConfig& server = config.getServer(0);
+bool HttpRequest::findUploadLocation(const std::string& path, std::string& uploadDir, size_t serverIndex) {
+    const ServerConfig& server = config.getServer(serverIndex);
     
     for (size_t i = 0; i < server.locations.size(); ++i) {
         const LocationConfig& loc = server.locations[i];
@@ -190,6 +355,8 @@ bool HttpRequest::saveUploadedFile(const std::string& fullPath, const std::strin
 // Handle POST file upload
 void HttpRequest::handlePostUpload(ClientConnection* client, const std::string& path,
                                   const std::string& headers, size_t bodyStart) {
+    const ServerConfig& server = config.getServer(client->serverIndex);
+    
     size_t contentLength;
     if (!getContentLength(headers, contentLength)) {
         client->responseBuffer = HttpResponse::build411();
@@ -197,7 +364,7 @@ void HttpRequest::handlePostUpload(ClientConnection* client, const std::string& 
     }
     
     // Check against max body size
-    if (contentLength > config.getServer(0).clientMaxBodySize) {
+    if (contentLength > server.clientMaxBodySize) {
         client->responseBuffer = HttpResponse::build413();
         return;
     }
@@ -214,8 +381,16 @@ void HttpRequest::handlePostUpload(ClientConnection* client, const std::string& 
     
     // Find upload location
     std::string uploadDir;
-    if (!findUploadLocation(path, uploadDir)) {
-        client->responseBuffer = HttpResponse::build403("File upload not allowed for this location.");
+    if (!findUploadLocation(path, uploadDir, client->serverIndex)) {
+        client->responseBuffer = HttpResponse::build403("File upload not allowed for this location.", &server);
+        return;
+    }
+    
+    // Verify upload directory exists
+    struct stat dirStat;
+    if (stat(uploadDir.c_str(), &dirStat) != 0 || !S_ISDIR(dirStat.st_mode)) {
+        std::cerr << "Upload directory does not exist: " << uploadDir << std::endl;
+        client->responseBuffer = HttpResponse::build404(&server);
         return;
     }
     
@@ -230,7 +405,7 @@ void HttpRequest::handlePostUpload(ClientConnection* client, const std::string& 
     // Extract and save body
     std::string body = client->requestBuffer.substr(bodyStart, contentLength);
     if (!saveUploadedFile(fullPath, body)) {
-        client->responseBuffer = HttpResponse::build500("Failed to save uploaded file.");
+        client->responseBuffer = HttpResponse::build500("Failed to save uploaded file.", &server);
         return;
     }
     
@@ -244,40 +419,20 @@ void HttpRequest::handlePostUpload(ClientConnection* client, const std::string& 
 }
 
 // Handle POST form data (non-upload)
-void HttpRequest::handlePostData(ClientConnection* client, const std::string& path,
+void HttpRequest::handlePostData(ClientConnection* client, const std::string& /* path */,
                                 const std::string& headers, size_t bodyStart) {
-    // Check if POST is allowed for this location
-    const ServerConfig& server = config.getServer(0);
-    bool postAllowed = false;
-    
-    for (size_t i = 0; i < server.locations.size(); ++i) {
-        const LocationConfig& loc = server.locations[i];
-        
-        if (path.find(loc.path) == 0) {
-            for (size_t j = 0; j < loc.allowMethods.size(); ++j) {
-                if (loc.allowMethods[j] == "POST") {
-                    postAllowed = true;
-                    break;
-                }
-            }
-            break;
-        }
-    }
-    
-    if (!postAllowed) {
-        client->responseBuffer = HttpResponse::build403("POST method not allowed for this location.");
-        return;
-    }
+    // Method allowed check is already done in handleRequest
+    const ServerConfig& server = config.getServer(client->serverIndex);
     
     size_t contentLength;
     if (!getContentLength(headers, contentLength)) {
-        client->responseBuffer = HttpResponse::build411();
+        client->responseBuffer = HttpResponse::build411(&server);
         return;
     }
     
     // Check against max body size
-    if (contentLength > config.getServer(0).clientMaxBodySize) {
-        client->responseBuffer = HttpResponse::build413();
+    if (contentLength > server.clientMaxBodySize) {
+        client->responseBuffer = HttpResponse::build413(&server);
         return;
     }
     
@@ -305,7 +460,7 @@ void HttpRequest::handlePost(ClientConnection* client, const std::string& path,
     
     // Check if path has upload_store configured
     std::string uploadDir;
-    bool hasUploadLocation = findUploadLocation(path, uploadDir);
+    bool hasUploadLocation = findUploadLocation(path, uploadDir, client->serverIndex);
     
     // Route based on headers and location configuration
     if (hasUploadHeaders || hasUploadLocation) {
@@ -316,9 +471,8 @@ void HttpRequest::handlePost(ClientConnection* client, const std::string& path,
 }
 
 void HttpRequest::handleDelete(ClientConnection* client, const std::string& path) {
-    // Check if DELETE is allowed for this location
-    const ServerConfig& server = config.getServer(0);
-    bool deleteAllowed = false;
+    // Method allowed check is already done in handleRequest
+    const ServerConfig& server = config.getServer(client->serverIndex);
     std::string locationRoot;
     size_t bestMatchLength = 0;
     const LocationConfig* bestMatch = NULL;
@@ -336,24 +490,8 @@ void HttpRequest::handleDelete(ClientConnection* client, const std::string& path
         }
     }
     
-    if (bestMatch) {
-        // Check if DELETE is in allowed methods
-        for (size_t j = 0; j < bestMatch->allowMethods.size(); ++j) {
-            if (bestMatch->allowMethods[j] == "DELETE") {
-                deleteAllowed = true;
-                break;
-            }
-        }
-        
-        // Get location root if specified
-        if (!bestMatch->root.empty()) {
-            locationRoot = bestMatch->root;
-        }
-    }
-    
-    if (!deleteAllowed) {
-        client->responseBuffer = HttpResponse::build403("DELETE method not allowed for this location.");
-        return;
+    if (bestMatch && !bestMatch->root.empty()) {
+        locationRoot = bestMatch->root;
     }
     
     // Build full file path
@@ -379,19 +517,20 @@ void HttpRequest::handleDelete(ClientConnection* client, const std::string& path
     struct stat fileStat;
     if (stat(filePath.c_str(), &fileStat) != 0) {
         // File doesn't exist
-        client->responseBuffer = HttpResponse::build404();
+        client->responseBuffer = HttpResponse::build404(&server);
         return;
     }
     
     // Check if it's a regular file (not a directory)
     if (!S_ISREG(fileStat.st_mode)) {
-        client->responseBuffer = HttpResponse::build403("Cannot delete directories.");
+        // It's a directory or special file - treat as not found for DELETE
+        client->responseBuffer = HttpResponse::build404(&server);
         return;
     }
     
     // Attempt to delete the file
     if (unlink(filePath.c_str()) != 0) {
-        client->responseBuffer = HttpResponse::build500("Failed to delete file.");
+        client->responseBuffer = HttpResponse::build500("Failed to delete file.", &server);
         return;
     }
     
