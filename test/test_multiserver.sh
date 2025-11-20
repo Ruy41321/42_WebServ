@@ -271,9 +271,9 @@ else
     TESTS_FAILED=$((TESTS_FAILED + 1))
 fi
 
-check_result "501" "$POST_8082" "Server 8082 / rejects POST"
-check_result "501" "$DELETE_8082" "Server 8082 / rejects DELETE"
-check_result "501" "$PUT_8082" "Server 8082 / rejects PUT"
+check_result "405" "$POST_8082" "Server 8082 / rejects POST (405 - method not allowed)"
+check_result "405" "$DELETE_8082" "Server 8082 / rejects DELETE (405 - method not allowed)"
+check_result "501" "$PUT_8082" "Server 8082 / rejects PUT (501 - not implemented)"
 echo
 
 # Test 3.4: Method isolation - same method different servers

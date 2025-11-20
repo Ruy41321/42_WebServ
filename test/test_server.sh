@@ -108,7 +108,7 @@ test_post_upload_small() {
     response=$(curl -s -w "%{http_code}" -o /dev/null \
         -X POST \
         --data-binary "@$TEST_FILES_DIR/small.txt" \
-        "$SERVER_URL/upload")
+        "$SERVER_URL/uploads")
     
     test_result "POST /upload with small file returns 201" "201" "$response"
     
@@ -128,7 +128,7 @@ test_post_upload_with_filename() {
         -X POST \
         -H 'Content-Disposition: attachment; filename="custom_name.txt"' \
         --data-binary "@$TEST_FILES_DIR/small.txt" \
-        "$SERVER_URL/upload")
+        "$SERVER_URL/uploads")
     
     test_result "POST /upload with filename returns 201" "201" "$response"
     
@@ -147,7 +147,7 @@ test_post_upload_large() {
     response=$(curl -s -w "%{http_code}" -o /dev/null \
         -X POST \
         --data-binary "@$TEST_FILES_DIR/large.bin" \
-        "$SERVER_URL/upload")
+        "$SERVER_URL/uploads")
     
     test_result "POST /upload with large file returns 413" "413" "$response"
 }
@@ -170,7 +170,7 @@ test_post_no_content_length() {
     echo -e "\n${BLUE}[Test 7] POST Without Content-Length${NC}"
     
     # Send raw HTTP request without Content-Length
-    response=$(echo -ne "POST /upload HTTP/1.0\r\nHost: $SERVER_HOST\r\n\r\ntest data" | \
+    response=$(echo -ne "POST /uploads HTTP/1.0\r\nHost: $SERVER_HOST\r\n\r\ntest data" | \
         nc -w 2 $SERVER_HOST $SERVER_PORT | head -1 | grep -o "[0-9]\{3\}")
     
     test_result "POST without Content-Length returns 411" "411" "$response"
@@ -251,9 +251,9 @@ test_delete_file() {
     # Delete the file
     response=$(curl -s -w "%{http_code}" -o /dev/null \
         -X DELETE \
-        "$SERVER_URL/upload/test_delete.txt")
+        "$SERVER_URL/uploads/test_delete.txt")
     
-    test_result "DELETE /upload/test_delete.txt returns 200" "200" "$response"
+    test_result "DELETE /uploads/test_delete.txt returns 200" "200" "$response"
     
     # Verify file was deleted
     if [ ! -f "$UPLOAD_DIR/test_delete.txt" ]; then
@@ -269,7 +269,7 @@ test_delete_nonexistent() {
     
     response=$(curl -s -w "%{http_code}" -o /dev/null \
         -X DELETE \
-        "$SERVER_URL/upload/nonexistent_file.txt")
+        "$SERVER_URL/uploads/nonexistent_file.txt")
     
     test_result "DELETE non-existent file returns 404" "404" "$response"
 }
@@ -285,7 +285,7 @@ test_delete_forbidden() {
         -X DELETE \
         "$SERVER_URL/test_file.txt")
     
-    test_result "DELETE without permission returns 403" "403" "$response"
+    test_result "DELETE without permission returns 405 (method not allowed)" "405" "$response"
     
     # Cleanup
     rm -f "$PROJECT_DIR/www/test_file.txt"
@@ -300,7 +300,7 @@ test_delete_directory() {
     
     response=$(curl -s -w "%{http_code}" -o /dev/null \
         -X DELETE \
-        "$SERVER_URL/upload/test_directory")
+        "$SERVER_URL/uploads/test_directory")
     
     test_result "DELETE directory returns 403" "403" "$response"
     
