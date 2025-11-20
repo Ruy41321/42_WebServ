@@ -494,24 +494,13 @@ void HttpRequest::handleDelete(ClientConnection* client, const std::string& path
         locationRoot = bestMatch->root;
     }
     
-    // Build full file path
-    std::string filePath;
-    if (!locationRoot.empty()) {
-        // Use location-specific root
-        std::string relativePath = path;
-        // Remove location path prefix if present
-        size_t prefixPos = path.find("/upload");
-        if (prefixPos == 0) {
-            relativePath = path.substr(7);  // Remove "/upload"
-            if (relativePath.empty()) {
-                relativePath = "/";
-            }
-        }
-        filePath = locationRoot + relativePath;
-    } else {
-        // Use server root
-        filePath = config.getRoot() + path;
+    // Build full file path (same logic as GET)
+    std::string root = server.root;
+    if (bestMatch && !bestMatch->root.empty()) {
+        root = bestMatch->root;
     }
+    
+    std::string filePath = root + path;
     
     // Check if file exists using stat
     struct stat fileStat;
@@ -523,8 +512,8 @@ void HttpRequest::handleDelete(ClientConnection* client, const std::string& path
     
     // Check if it's a regular file (not a directory)
     if (!S_ISREG(fileStat.st_mode)) {
-        // It's a directory or special file - treat as not found for DELETE
-        client->responseBuffer = HttpResponse::build404(&server);
+        // It's a directory or special file - forbidden to delete
+        client->responseBuffer = HttpResponse::build403("Cannot delete directories or special files.", &server);
         return;
     }
     
