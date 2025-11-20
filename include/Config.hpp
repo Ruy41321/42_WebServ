@@ -16,6 +16,7 @@ struct LocationConfig {
     std::vector<std::string> allowMethods;      // Allowed HTTP methods (GET, POST, DELETE)
     std::string index;                          // Default file for directory (single file)
     bool autoindex;                             // Directory listing enabled
+    bool hasAutoindex;                          // True if autoindex was explicitly set in config
     std::string uploadStore;                    // Upload storage directory (empty = disabled)
     std::vector<std::string> cgiPath;           // Paths to CGI interpreters
     std::vector<std::string> cgiExt;            // CGI file extensions

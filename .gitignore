@@ -12,3 +12,9 @@ webserv
 
 # OS files
 .DS_Store
+
+# General
+
+to_do.txt
+www/uploads/*
+www/site2/submissions/*

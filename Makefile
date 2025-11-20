@@ -10,7 +10,11 @@ OBJDIR = obj
 
 SRCS = $(SRCDIR)/main.cpp \
        $(SRCDIR)/WebServer.cpp \
-       $(SRCDIR)/Config.cpp
+       $(SRCDIR)/Config.cpp \
+       $(SRCDIR)/ClientConnection.cpp \
+       $(SRCDIR)/ConnectionManager.cpp \
+       $(SRCDIR)/HttpRequest.cpp \
+       $(SRCDIR)/HttpResponse.cpp
 
 OBJS = $(SRCS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
 
@@ -29,6 +33,14 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.cpp
 run: $(NAME)
 	./$(NAME) config/default.conf
 
+# Debug build with debugging symbols
+debug: CXXFLAGS += -g -DDEBUG
+debug: fclean $(NAME)
+
+# Run with debugger
+debug_run: debug
+	gdb --args ./$(NAME) config/default.conf
+
 # Build test configuration parser
 build_test: $(TEST_CONFIG)
 
@@ -39,6 +51,11 @@ $(TEST_CONFIG): $(TEST_SRCS)
 test_config: build_test
 	./$(TEST_CONFIG) config/default.conf
 
+# Run automated test suite
+test: $(NAME)
+	@echo "Running automated tests..."
+	@$(TESTDIR)/test_server.sh
+
 clean:
 	rm -rf $(OBJDIR)
 
@@ -48,4 +65,4 @@ fclean: clean
 
 re: fclean all
 
-.PHONY: all clean fclean re run build_test test_config
+.PHONY: all clean fclean re run build_test test_config test
