@@ -76,7 +76,7 @@ void HttpRequest::handleRequest(ClientConnection* client) {
     }
     
     // Check if method is implemented
-    if (method != "GET" && method != "POST" && method != "DELETE") {
+    if (method != "GET" && method != "HEAD" && method != "POST" && method != "PUT" && method != "DELETE") {
         const ServerConfig& server = config.getServer(client->serverIndex);
         client->responseBuffer = HttpResponse::build501(&server);
         return;
@@ -90,13 +90,14 @@ void HttpRequest::handleRequest(ClientConnection* client) {
     }
     
     // For POST/PUT requests, check Content-Length against max body size EARLY
-    if (method == "POST") {
+    if (method == "POST" || method == "PUT") {
         size_t contentLength;
         if (getContentLength(headers, contentLength)) {
-            const ServerConfig& server = config.getServer(client->serverIndex);
-            if (contentLength > server.clientMaxBodySize) {
+            size_t maxBodySize = getMaxBodySize(path, client->serverIndex);
+            if (contentLength > maxBodySize) {
                 std::cout << "Body size " << contentLength << " exceeds limit " 
-                          << server.clientMaxBodySize << std::endl;
+                          << maxBodySize << std::endl;
+                const ServerConfig& server = config.getServer(client->serverIndex);
                 client->responseBuffer = HttpResponse::build413(&server);
                 return;
             }
@@ -104,10 +105,21 @@ void HttpRequest::handleRequest(ClientConnection* client) {
     }
     
     // Route to appropriate handler
-    if (method == "GET") {
+    if (method == "GET" || method == "HEAD") {
+        // HEAD is treated like GET, but response body is stripped later
         handleGet(client, path);
+        
+        // For HEAD requests, keep headers but remove body
+        if (method == "HEAD") {
+            size_t bodyStart = client->responseBuffer.find("\r\n\r\n");
+            if (bodyStart != std::string::npos) {
+                client->responseBuffer = client->responseBuffer.substr(0, bodyStart + 4);
+            }
+        }
     } else if (method == "POST") {
         handlePost(client, path, headers, bodyStart);
+    } else if (method == "PUT") {
+        handlePut(client, path, headers, bodyStart);
     } else if (method == "DELETE") {
         handleDelete(client, path);
     }
@@ -235,6 +247,10 @@ bool HttpRequest::isMethodAllowed(const std::string& method, const std::string& 
         if (bestMatch->allowMethods[i] == method) {
             return true;
         }
+        // HEAD is allowed wherever GET is allowed
+        if (method == "HEAD" && bestMatch->allowMethods[i] == "GET") {
+            return true;
+        }
     }
     
     return false;
@@ -297,16 +313,16 @@ bool HttpRequest::findUploadLocation(const std::string& path, std::string& uploa
         const LocationConfig& loc = server.locations[i];
         
         if (path.find(loc.path) == 0) {
-            // Check if POST is allowed
-            bool postAllowed = false;
+            // Check if POST or PUT is allowed
+            bool uploadMethodAllowed = false;
             for (size_t j = 0; j < loc.allowMethods.size(); ++j) {
-                if (loc.allowMethods[j] == "POST") {
-                    postAllowed = true;
+                if (loc.allowMethods[j] == "POST" || loc.allowMethods[j] == "PUT") {
+                    uploadMethodAllowed = true;
                     break;
                 }
             }
             
-            if (postAllowed && !loc.uploadStore.empty()) {
+            if (uploadMethodAllowed && !loc.uploadStore.empty()) {
                 uploadDir = loc.uploadStore;
                 return true;
             }
@@ -359,13 +375,14 @@ void HttpRequest::handlePostUpload(ClientConnection* client, const std::string& 
     
     size_t contentLength;
     if (!getContentLength(headers, contentLength)) {
-        client->responseBuffer = HttpResponse::build411();
+        client->responseBuffer = HttpResponse::build411(&server);
         return;
     }
     
-    // Check against max body size
-    if (contentLength > server.clientMaxBodySize) {
-        client->responseBuffer = HttpResponse::build413();
+    // Check against max body size (location-specific or server default)
+    size_t maxBodySize = getMaxBodySize(path, client->serverIndex);
+    if (contentLength > maxBodySize) {
+        client->responseBuffer = HttpResponse::build413(&server);
         return;
     }
     
@@ -419,7 +436,7 @@ void HttpRequest::handlePostUpload(ClientConnection* client, const std::string& 
 }
 
 // Handle POST form data (non-upload)
-void HttpRequest::handlePostData(ClientConnection* client, const std::string& /* path */,
+void HttpRequest::handlePostData(ClientConnection* client, const std::string& path,
                                 const std::string& headers, size_t bodyStart) {
     // Method allowed check is already done in handleRequest
     const ServerConfig& server = config.getServer(client->serverIndex);
@@ -430,8 +447,9 @@ void HttpRequest::handlePostData(ClientConnection* client, const std::string& /*
         return;
     }
     
-    // Check against max body size
-    if (contentLength > server.clientMaxBodySize) {
+    // Check against max body size (location-specific or server default)
+    size_t maxBodySize = getMaxBodySize(path, client->serverIndex);
+    if (contentLength > maxBodySize) {
         client->responseBuffer = HttpResponse::build413(&server);
         return;
     }
@@ -529,4 +547,138 @@ void HttpRequest::handleDelete(ClientConnection* client, const std::string& path
                 << "<p>File deleted: " << path << "</p>"
                 << "</body></html>";
     client->responseBuffer = HttpResponse::build200("text/html", successBody.str());
+}
+
+// Handle PUT request (file upload/creation)
+void HttpRequest::handlePut(ClientConnection* client, const std::string& path,
+                           const std::string& headers, size_t bodyStart) {
+    const ServerConfig& server = config.getServer(client->serverIndex);
+    
+    // Check Content-Length
+    size_t contentLength;
+    if (!getContentLength(headers, contentLength)) {
+        client->responseBuffer = HttpResponse::build411(&server);
+        return;
+    }
+    
+    // Check against max body size
+    size_t maxBodySize = getMaxBodySize(path, client->serverIndex);
+    if (contentLength > maxBodySize) {
+        client->responseBuffer = HttpResponse::build413(&server);
+        return;
+    }
+    
+    // Check if body is complete
+    size_t bodyReceived = client->requestBuffer.length() - bodyStart;
+    if (bodyReceived < contentLength) {
+        std::cout << "PUT body incomplete: " << bodyReceived 
+                  << "/" << contentLength << " bytes received" << std::endl;
+        return;
+    }
+    
+    std::cout << "PUT request complete (" << contentLength << " bytes)" << std::endl;
+    
+    // Find upload location
+    std::string uploadDir;
+    if (!findUploadLocation(path, uploadDir, client->serverIndex)) {
+        // If no upload_store configured, construct file path from request path
+        const LocationConfig* bestMatch = NULL;
+        size_t bestMatchLength = 0;
+        
+        for (size_t i = 0; i < server.locations.size(); ++i) {
+            const LocationConfig& loc = server.locations[i];
+            if (path.find(loc.path) == 0) {
+                size_t matchLength = loc.path.length();
+                if (matchLength > bestMatchLength) {
+                    bestMatchLength = matchLength;
+                    bestMatch = &loc;
+                }
+            }
+        }
+        
+        std::string root = server.root;
+        if (bestMatch && !bestMatch->root.empty()) {
+            root = bestMatch->root;
+        }
+        
+        // For PUT, save to the exact path requested
+        std::string fullPath = root + path;
+        
+        // Extract and save body
+        std::string body = client->requestBuffer.substr(bodyStart, contentLength);
+        if (!saveUploadedFile(fullPath, body)) {
+            client->responseBuffer = HttpResponse::build500("Failed to save file.", &server);
+            return;
+        }
+        
+        // Success response (201 Created)
+        std::ostringstream successBody;
+        successBody << "<html><body><h1>Upload Successful</h1>"
+                    << "<p>File created: " << path << "</p>"
+                    << "<p>Size: " << contentLength << " bytes</p>"
+                    << "</body></html>";
+        client->responseBuffer = HttpResponse::build201(successBody.str());
+        return;
+    }
+    
+    // Upload location found - use upload directory
+    std::string filename = extractFilename(headers);
+    if (filename.empty()) {
+        // No filename in headers, use path's filename
+        size_t lastSlash = path.find_last_of('/');
+        if (lastSlash != std::string::npos && lastSlash < path.length() - 1) {
+            filename = path.substr(lastSlash + 1);
+        } else {
+            filename = "uploaded_file";
+        }
+    }
+    
+    std::string fullPath = uploadDir;
+    if (fullPath[fullPath.length() - 1] != '/') {
+        fullPath += "/";
+    }
+    fullPath += filename;
+    
+    // Extract and save body
+    std::string body = client->requestBuffer.substr(bodyStart, contentLength);
+    if (!saveUploadedFile(fullPath, body)) {
+        client->responseBuffer = HttpResponse::build500("Failed to save file.", &server);
+        return;
+    }
+    
+    // Success response (201 Created)
+    std::ostringstream successBody;
+    successBody << "<html><body><h1>Upload Successful</h1>"
+                << "<p>File created: " << filename << "</p>"
+                << "<p>Size: " << contentLength << " bytes</p>"
+                << "</body></html>";
+    client->responseBuffer = HttpResponse::build201(successBody.str());
+}
+
+// Helper: Get max body size for a location
+size_t HttpRequest::getMaxBodySize(const std::string& path, size_t serverIndex) {
+    const ServerConfig& server = config.getServer(serverIndex);
+    
+    // Find the best matching location
+    const LocationConfig* bestMatch = NULL;
+    size_t bestMatchLength = 0;
+    
+    for (size_t i = 0; i < server.locations.size(); ++i) {
+        const LocationConfig& loc = server.locations[i];
+        if (path.find(loc.path) == 0) {
+            size_t matchLength = loc.path.length();
+            if (matchLength > bestMatchLength) {
+                bestMatchLength = matchLength;
+                bestMatch = &loc;
+            }
+        }
+    }
+    
+    // If location has specific max body size, use it
+    if (bestMatch && bestMatch->clientMaxBodySize > 0) {
+        return bestMatch->clientMaxBodySize;
+    }
+    
+    // Otherwise use server default
+    return server.clientMaxBodySize;
 }
