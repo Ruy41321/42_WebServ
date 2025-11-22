@@ -17,6 +17,7 @@ private:
     bool saveUploadedFile(const std::string& fullPath, const std::string& body);
     bool isMethodAllowed(const std::string& method, const std::string& path, size_t serverIndex);
     bool checkRedirect(const std::string& path, size_t serverIndex, std::string& redirectUrl, int& statusCode);
+    size_t getMaxBodySize(const std::string& path, size_t serverIndex);
     
     void handlePostUpload(ClientConnection* client, const std::string& path,
                          const std::string& headers, size_t bodyStart);
@@ -30,6 +31,8 @@ public:
     void handleGet(ClientConnection* client, const std::string& path);
     void handlePost(ClientConnection* client, const std::string& path, 
                    const std::string& headers, size_t bodyStart);
+    void handlePut(ClientConnection* client, const std::string& path, 
+                  const std::string& headers, size_t bodyStart);
     void handleDelete(ClientConnection* client, const std::string& path);
     
     static bool isRequestComplete(const std::string& buffer);
