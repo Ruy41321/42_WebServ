@@ -49,16 +49,17 @@ void HttpRequest::handleRequest(ClientConnection* client) {
     
     std::cout << "Request: " << method << " " << path << " " << version << std::endl;
     
+    // Get server config once for this request
+    const ServerConfig& server = config.getServer(client->serverIndex);
+    
     // Validate request line format (must have method, path, and HTTP version)
     if (method.empty() || path.empty() || version.empty()) {
-        const ServerConfig& server = config.getServer(client->serverIndex);
         client->responseBuffer = HttpResponse::build400(&server);
         return;
     }
     
     // Validate HTTP version format
     if (version.find("HTTP/") != 0) {
-        const ServerConfig& server = config.getServer(client->serverIndex);
         client->responseBuffer = HttpResponse::build400(&server);
         return;
     }
@@ -77,14 +78,12 @@ void HttpRequest::handleRequest(ClientConnection* client) {
     
     // Check if method is implemented
     if (method != "GET" && method != "HEAD" && method != "POST" && method != "PUT" && method != "DELETE") {
-        const ServerConfig& server = config.getServer(client->serverIndex);
         client->responseBuffer = HttpResponse::build501(&server);
         return;
     }
     
     // Check if method is allowed for this location
     if (!isMethodAllowed(method, path, client->serverIndex)) {
-        const ServerConfig& server = config.getServer(client->serverIndex);
         client->responseBuffer = HttpResponse::build405(&server);
         return;
     }
@@ -97,7 +96,6 @@ void HttpRequest::handleRequest(ClientConnection* client) {
             if (contentLength > maxBodySize) {
                 std::cout << "Body size " << contentLength << " exceeds limit " 
                           << maxBodySize << std::endl;
-                const ServerConfig& server = config.getServer(client->serverIndex);
                 client->responseBuffer = HttpResponse::build413(&server);
                 return;
             }
