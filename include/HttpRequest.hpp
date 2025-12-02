@@ -13,7 +13,7 @@ private:
     bool getContentLength(const std::string& headers, size_t& contentLength);
     bool isUploadRequest(const std::string& headers);
     bool findUploadLocation(const std::string& path, std::string& uploadDir, size_t serverIndex);
-    std::string extractFilename(const std::string& headers);
+    std::string extractFilename(const std::string& headers, const std::string& path);
     bool saveUploadedFile(const std::string& fullPath, const std::string& body);
     bool isMethodAllowed(const std::string& method, const std::string& path, size_t serverIndex);
     bool checkRedirect(const std::string& path, size_t serverIndex, std::string& redirectUrl, int& statusCode);

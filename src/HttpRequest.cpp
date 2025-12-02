@@ -315,8 +315,8 @@ bool HttpRequest::findUploadLocation(const std::string& path, std::string& uploa
     return false;
 }
 
-// Helper: Extract filename from headers
-std::string HttpRequest::extractFilename(const std::string& headers) {
+// Helper: Extract filename from headers or path
+std::string HttpRequest::extractFilename(const std::string& headers, const std::string& path) {
     size_t dispositionPos = headers.find("Content-Disposition:");
     if (dispositionPos != std::string::npos) {
         size_t filenamePos = headers.find("filename=", dispositionPos);
@@ -330,9 +330,19 @@ std::string HttpRequest::extractFilename(const std::string& headers) {
         }
     }
     
-    // Generate filename with timestamp
+    // Try to extract extension from path
+    std::string extension = ".bin";
+    size_t lastSlash = path.find_last_of('/');
+    std::string filename = (lastSlash != std::string::npos) ? path.substr(lastSlash + 1) : path;
+    
+    size_t dotPos = filename.find_last_of('.');
+    if (dotPos != std::string::npos && dotPos > 0) {
+        extension = filename.substr(dotPos);
+    }
+    
+    // Generate filename with timestamp and proper extension
     std::ostringstream oss;
-    oss << "upload_" << time(NULL) << ".bin";
+    oss << "upload_" << time(NULL) << extension;
     return oss.str();
 }
 
@@ -395,7 +405,7 @@ void HttpRequest::handlePostUpload(ClientConnection* client, const std::string& 
     }
     
     // Extract filename and construct full path
-    std::string filename = extractFilename(headers);
+    std::string filename = extractFilename(headers, path);
     std::string fullPath = uploadDir;
     if (fullPath[fullPath.length() - 1] != '/') {
         fullPath += "/";
