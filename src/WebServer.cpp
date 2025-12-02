@@ -401,8 +401,15 @@ void WebServer::handleClientWrite(int clientSocket) {
     
     // Check if all data has been sent
     if (client->isResponseComplete()) {
+        // Extract response code from first line (e.g., "HTTP/1.0 200 OK")
+        std::string statusLine;
+        size_t endOfLine = client->responseBuffer.find("\r\n");
+        if (endOfLine != std::string::npos) {
+            statusLine = client->responseBuffer.substr(0, endOfLine);
+        }
         // Response complete, close connection (HTTP/1.0 default)
-        std::cout << "Response sent completely to socket " << clientSocket << std::endl;
+        std::cout << "Response sent to socket " << clientSocket 
+                  << " [" << statusLine << "]" << std::endl;
         connManager->removeClient(clientSocket);
     }
     // If not complete, EPOLLOUT will trigger again when socket is ready

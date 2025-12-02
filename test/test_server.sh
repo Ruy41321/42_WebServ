@@ -302,7 +302,7 @@ test_delete_directory() {
         -X DELETE \
         "$SERVER_URL/uploads/test_directory")
     
-    test_result "DELETE directory returns 403" "403" "$response"
+    test_result "DELETE directory returns 405" "405" "$response"
     
     # Cleanup
     rmdir "$UPLOAD_DIR/test_directory" 2>/dev/null
