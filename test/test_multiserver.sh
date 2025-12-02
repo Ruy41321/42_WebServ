@@ -221,7 +221,7 @@ else
 fi
 
 check_result "405" "$DELETE_8080" "Server 8080 / rejects DELETE (405 Method Not Allowed)"
-check_result "501" "$PUT_8080" "Server 8080 / rejects PUT (501 Not Implemented)"
+check_result "405" "$PUT_8080" "Server 8080 / rejects PUT (405 Method Not Allowed)"
 echo
 
 # Test 3.2: Server 8081 root location (GET POST DELETE allowed)
@@ -253,7 +253,7 @@ else
     echo -e "${YELLOW}Note:${NC} Server 8081 / DELETE response: $DELETE_8081"
 fi
 
-check_result "501" "$PUT_8081" "Server 8081 / rejects PUT (not allowed)"
+check_result "405" "$PUT_8081" "Server 8081 / rejects PUT (405 Method Not Allowed)"
 echo
 
 # Test 3.3: Server 8082 root location (GET only)
@@ -273,7 +273,7 @@ fi
 
 check_result "405" "$POST_8082" "Server 8082 / rejects POST (405 - method not allowed)"
 check_result "405" "$DELETE_8082" "Server 8082 / rejects DELETE (405 - method not allowed)"
-check_result "501" "$PUT_8082" "Server 8082 / rejects PUT (501 - not implemented)"
+check_result "405" "$PUT_8082" "Server 8082 / rejects PUT (405 Method Not Allowed)"
 echo
 
 # Test 3.4: Method isolation - same method different servers
@@ -314,11 +314,14 @@ echo
 echo "[Test 3.6] Distinguish 405 (not allowed) from 501 (not implemented)"
 # GET on /submit (8082) - GET not in allow_methods (POST DELETE only)
 GET_SUBMIT=$(curl -s -o /dev/null -w "%{http_code}" -X GET http://127.0.0.1:8082/submit 2>/dev/null)
-# PUT anywhere - not implemented at all
+# PUT anywhere - now implemented but not allowed on this location
 PUT_ANYWHERE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT http://127.0.0.1:8080/ -d "test=1" 2>/dev/null)
+# TRACE - not implemented
+TRACE_ANYWHERE=$(curl -s -o /dev/null -w "%{http_code}" -X TRACE http://127.0.0.1:8080/ 2>/dev/null)
 
 check_result "405" "$GET_SUBMIT" "GET on /submit (not allowed) returns 405"
-check_result "501" "$PUT_ANYWHERE" "PUT request (not implemented) returns 501"
+check_result "405" "$PUT_ANYWHERE" "PUT request (not allowed) returns 405"
+check_result "501" "$TRACE_ANYWHERE" "TRACE request (not implemented) returns 501"
 echo
 
 echo "========================================"

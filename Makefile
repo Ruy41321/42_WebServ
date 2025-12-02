@@ -1,6 +1,4 @@
 NAME = webserv
-TEST_CONFIG = test_config
-
 CXX = c++
 CXXFLAGS = -Wall -Wextra -Werror -std=c++98 -I./include
 
@@ -8,30 +6,38 @@ TESTDIR = test
 SRCDIR = src
 OBJDIR = obj
 
+# Main source files
 SRCS = $(SRCDIR)/main.cpp \
        $(SRCDIR)/WebServer.cpp \
        $(SRCDIR)/Config.cpp \
        $(SRCDIR)/ClientConnection.cpp \
        $(SRCDIR)/ConnectionManager.cpp \
-       $(SRCDIR)/HttpRequest.cpp \
        $(SRCDIR)/HttpResponse.cpp
 
-OBJS = $(SRCS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
+# Request handling files (refactored)
+SRCS += $(SRCDIR)/request/HttpRequest.cpp \
+        $(SRCDIR)/request/HttpRequestHandlers.cpp \
+        $(SRCDIR)/request/HttpRequestHelpers.cpp
 
-TEST_SRCS = $(TESTDIR)/test_config.cpp \
-            $(SRCDIR)/Config.cpp
+# Object files - handle subdirectories
+OBJS = $(patsubst $(SRCDIR)/%.cpp,$(OBJDIR)/%.o,$(SRCS))
 
 all: $(NAME)
 
 $(NAME): $(OBJS)
 	$(CXX) $(CXXFLAGS) $(OBJS) -o $(NAME)
 
+# Pattern rule for main src directory
 $(OBJDIR)/%.o: $(SRCDIR)/%.cpp
-	@mkdir -p $(OBJDIR)
+	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 run: $(NAME)
 	./$(NAME) config/default.conf
+
+subject_test: $(NAME)
+	@echo "Running subject test..."
+	@./$(NAME) config/subject_test.conf
 
 # Debug build with debugging symbols
 debug: CXXFLAGS += -g -DDEBUG
@@ -41,27 +47,19 @@ debug: fclean $(NAME)
 debug_run: debug
 	gdb --args ./$(NAME) config/default.conf
 
-# Build test configuration parser
-build_test: $(TEST_CONFIG)
-
-$(TEST_CONFIG): $(TEST_SRCS)
-	$(CXX) $(CXXFLAGS) $(TEST_SRCS) -o $(TEST_CONFIG)
-
-# Test configuration parser
-test_config: build_test
-	./$(TEST_CONFIG) config/default.conf
-
 # Run automated test suite
 test: $(NAME)
 	@echo "Running automated tests..."
-	@$(TESTDIR)/test_server.sh
+	$(TESTDIR)/test_server.sh
+	$(TESTDIR)/test_multiserver.sh
+	$(TESTDIR)/test_config_errors.sh
+	$(TESTDIR)/test_uploads.sh
 
 clean:
 	rm -rf $(OBJDIR)
 
 fclean: clean
 	rm -f $(NAME)
-	rm -f $(TEST_CONFIG)
 
 re: fclean all
 

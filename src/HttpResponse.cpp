@@ -90,6 +90,13 @@ std::string HttpResponse::build201(const std::string& body) {
     return oss.str();
 }
 
+std::string HttpResponse::build204() {
+    std::ostringstream oss;
+    oss << "HTTP/1.0 204 No Content\r\n"
+        << "\r\n";
+    return oss.str();
+}
+
 std::string HttpResponse::build301(const std::string& location) {
     std::string body = "<html><body><h1>301 Moved Permanently</h1><p>The document has moved <a href=\"" + location + "\">here</a>.</p></body></html>";
     std::ostringstream oss;
@@ -183,6 +190,37 @@ std::string HttpResponse::buildFileResponse(const std::string& fullPath, const S
     std::string contentType = getContentType(fullPath);
     
     return build200(contentType, content);
+}
+
+std::string HttpResponse::buildHeadResponse(const std::string& fullPath, const ServerConfig* serverConfig) {
+    std::ifstream file(fullPath.c_str(), std::ios::binary);
+    
+    if (!file.is_open()) {
+        // Return 404 headers only (no body for HEAD)
+        std::ostringstream oss;
+        oss << "HTTP/1.0 404 Not Found\r\n"
+            << "Content-Type: text/html\r\n"
+            << "Content-Length: 0\r\n"
+            << "\r\n";
+        return oss.str();
+    }
+    
+    // Get file size
+    file.seekg(0, std::ios::end);
+    size_t fileSize = file.tellg();
+    file.close();
+    
+    // Get content type
+    std::string contentType = getContentType(fullPath);
+    
+    // Return headers only (no body for HEAD)
+    std::ostringstream oss;
+    oss << "HTTP/1.0 200 OK\r\n"
+        << "Content-Type: " << contentType << "\r\n"
+        << "Content-Length: " << fileSize << "\r\n"
+        << "\r\n";
+    return oss.str();
+    (void)serverConfig; // Unused for now, but kept for consistency
 }
 
 void HttpResponse::collectDirectoryEntries(const std::string& dirPath, std::vector<std::string>& files, std::vector<std::string>& directories) {
