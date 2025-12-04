@@ -22,6 +22,7 @@ struct LocationConfig {
     std::vector<std::string> cgiExt;            // CGI file extensions
     std::string redirect;                       // HTTP redirect (e.g., "301 /new-page")
     size_t clientMaxBodySize;                   // Max body size for this location
+    bool hasClientMaxBodySize;                  // True if clientMaxBodySize was explicitly set
     
     LocationConfig();
 };

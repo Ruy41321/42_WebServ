@@ -173,6 +173,34 @@ std::string HttpResponse::build501(const ServerConfig* serverConfig) {
     return buildErrorResponse(501, "Not Implemented", defaultContent, serverConfig, rootDir);
 }
 
+std::string HttpResponse::build504(const ServerConfig* serverConfig) {
+    std::string defaultContent = "<html><body><h1>504 Gateway Timeout</h1><p>CGI script timed out.</p></body></html>";
+    std::string rootDir = serverConfig ? serverConfig->root : "./www";
+    return buildErrorResponse(504, "Gateway Timeout", defaultContent, serverConfig, rootDir);
+}
+
+std::string HttpResponse::getStatusText(int statusCode) {
+    switch (statusCode) {
+        case 200: return "OK";
+        case 201: return "Created";
+        case 204: return "No Content";
+        case 301: return "Moved Permanently";
+        case 302: return "Found";
+        case 400: return "Bad Request";
+        case 403: return "Forbidden";
+        case 404: return "Not Found";
+        case 405: return "Method Not Allowed";
+        case 411: return "Length Required";
+        case 413: return "Payload Too Large";
+        case 500: return "Internal Server Error";
+        case 501: return "Not Implemented";
+        case 502: return "Bad Gateway";
+        case 503: return "Service Unavailable";
+        case 504: return "Gateway Timeout";
+        default: return "Unknown";
+    }
+}
+
 std::string HttpResponse::buildFileResponse(const std::string& fullPath, const ServerConfig* serverConfig) {
     std::ifstream file(fullPath.c_str(), std::ios::binary);
     

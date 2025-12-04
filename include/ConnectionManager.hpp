@@ -2,12 +2,14 @@
 #define CONNECTIONMANAGER_HPP
 
 #include <vector>
+#include <map>
 #include <sys/epoll.h>
 #include "ClientConnection.hpp"
 
 class ConnectionManager {
 private:
     std::vector<ClientConnection*> clients;
+    std::map<int, ClientConnection*> cgiPipeToClient;  // Map CGI pipe FDs to client
     int epollFd;
     
 public:
@@ -20,6 +22,15 @@ public:
     void closeAllClients();
     
     void prepareResponseMode(ClientConnection* client);
+    
+    // CGI pipe management
+    void addCgiPipes(ClientConnection* client);
+    void removeCgiPipes(ClientConnection* client);
+    ClientConnection* findClientByCgiPipe(int pipeFd);
+    bool isCgiPipe(int fd);
+    
+    // Get all clients (for timeout checking)
+    std::vector<ClientConnection*>& getClients();
 };
 
 #endif

@@ -28,6 +28,10 @@ public:
     // Server errors
     static std::string build500(const std::string& message, const ServerConfig* serverConfig = NULL);
     static std::string build501(const ServerConfig* serverConfig = NULL);
+    static std::string build504(const ServerConfig* serverConfig = NULL);
+    
+    // Utility
+    static std::string getStatusText(int statusCode);
     
     // File/Directory responses
     static std::string buildFileResponse(const std::string& fullPath, const ServerConfig* serverConfig = NULL);

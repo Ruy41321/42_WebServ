@@ -3,8 +3,8 @@
 
 // LocationConfig constructor with default values
 LocationConfig::LocationConfig() 
-    : path("/"), root(""), alias(""), index(""), autoindex(false),
-      uploadStore(""), redirect(""), clientMaxBodySize(0) {
+    : path("/"), root(""), alias(""), index(""), autoindex(false), hasAutoindex(false),
+      uploadStore(""), redirect(""), clientMaxBodySize(0), hasClientMaxBodySize(false) {
 }
 
 // ServerConfig constructor with default values
@@ -134,12 +134,13 @@ bool Config::parseLocationBlock(std::ifstream& file, std::string& line, ServerCo
             }
         }
         else if (directive == "client_max_body_size" && tokens.size() >= 2) {
-            int bodySize = std::atoi(tokens[1].c_str());
-            if (bodySize <= 0) {
-                std::cerr << "Error: Invalid client_max_body_size " << bodySize << " (must be positive)" << std::endl;
+            long bodySize = std::atol(tokens[1].c_str());
+            if (bodySize < 0) {
+                std::cerr << "Error: Invalid client_max_body_size " << bodySize << " (must be non-negative)" << std::endl;
                 return false;
             }
-            location.clientMaxBodySize = bodySize;
+            location.clientMaxBodySize = static_cast<size_t>(bodySize);
+            location.hasClientMaxBodySize = true;  // Mark as explicitly configured
         }
     }
     
@@ -231,12 +232,12 @@ bool Config::parseServerBlock(std::ifstream& file, std::string& line) {
             server.autoindex = (tokens[1] == "on");
         }
         else if (directive == "client_max_body_size" && tokens.size() >= 2) {
-            int bodySize = std::atoi(tokens[1].c_str());
-            if (bodySize <= 0) {
-                std::cerr << "Error: Invalid client_max_body_size " << bodySize << " (must be positive)" << std::endl;
+            long bodySize = std::atol(tokens[1].c_str());
+            if (bodySize < 0) {
+                std::cerr << "Error: Invalid client_max_body_size " << bodySize << " (must be non-negative)" << std::endl;
                 return false;
             }
-            server.clientMaxBodySize = bodySize;
+            server.clientMaxBodySize = static_cast<size_t>(bodySize);
         }
         else if (directive == "error_page" && tokens.size() >= 3) {
             // Parse error_page: "error_page 404 /errors/404.html"

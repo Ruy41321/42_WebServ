@@ -5,9 +5,13 @@
 #include "ClientConnection.hpp"
 #include "Config.hpp"
 
+// Forward declaration
+class CgiHandler;
+
 class HttpRequest {
 private:
     Config& config;
+    CgiHandler* cgiHandler;
     
     // ==================== Validation & Routing ====================
     bool validateRequestLine(const std::string& method, const std::string& path, 
@@ -29,6 +33,8 @@ private:
     std::string getContentType(const std::string& headers);
     std::string getBoundary(const std::string& headers);
     bool isUploadRequest(const std::string& headers);
+    bool isChunkedTransferEncoding(const std::string& headers);
+    std::string unchunkBody(const std::string& chunkedBody);
     
     // ==================== File Upload Helpers ====================
     std::string extractFilename(const std::string& headers, const std::string& path);
@@ -38,14 +44,18 @@ private:
                                      std::string& extractedFilename);
     bool saveUploadedFile(const std::string& fullPath, const std::string& body);
     
+    // ==================== CGI Helpers ====================
+    bool handleCgiRequest(ClientConnection* client, const std::string& method,
+                         const std::string& path, const std::string& headers,
+                         size_t bodyStart);
+    
     // ==================== Method Handlers ====================
     void handlePostUpload(ClientConnection* client, const std::string& path,
                          const std::string& headers, size_t bodyStart);
-    void handlePostData(ClientConnection* client, const std::string& path,
-                       const std::string& headers, size_t bodyStart);
     
 public:
     HttpRequest(Config& cfg);
+    ~HttpRequest();
     
     // Main request dispatcher
     void handleRequest(ClientConnection* client);
@@ -58,6 +68,9 @@ public:
     void handlePut(ClientConnection* client, const std::string& path,
                   const std::string& headers, size_t bodyStart);
     void handleDelete(ClientConnection* client, const std::string& path);
+    
+    // CGI handler accessor (for WebServer to manage CGI I/O)
+    CgiHandler* getCgiHandler() const;
     
     // Static utility methods
     static bool isRequestComplete(const std::string& buffer);

@@ -12,7 +12,8 @@ SRCS = $(SRCDIR)/main.cpp \
        $(SRCDIR)/Config.cpp \
        $(SRCDIR)/ClientConnection.cpp \
        $(SRCDIR)/ConnectionManager.cpp \
-       $(SRCDIR)/HttpResponse.cpp
+       $(SRCDIR)/HttpResponse.cpp \
+       $(SRCDIR)/CgiHandler.cpp
 
 # Request handling files (refactored)
 SRCS += $(SRCDIR)/request/HttpRequest.cpp \
@@ -36,8 +37,19 @@ run: $(NAME)
 	./$(NAME) config/default.conf
 
 subject_test: $(NAME)
-	@echo "Running subject test..."
-	@./$(NAME) config/subject_test.conf
+	@echo "Checking if server is running on port 8084..."
+	@if curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8084 | grep -q "200\|404\|405\|500"; then \
+		echo "Running subject test..."; \
+		./subject/ubuntu_tester http://127.0.0.1:8084; \
+	else \
+		echo ""; \
+		echo "ERROR: Server is not running on http://127.0.0.1:8084"; \
+		echo ""; \
+		echo "Please start the server first with:"; \
+		echo "  make run"; \
+		echo ""; \
+		exit 1; \
+	fi
 
 # Debug build with debugging symbols
 debug: CXXFLAGS += -g -DDEBUG
@@ -54,6 +66,7 @@ test: $(NAME)
 	$(TESTDIR)/test_multiserver.sh
 	$(TESTDIR)/test_config_errors.sh
 	$(TESTDIR)/test_uploads.sh
+	$(TESTDIR)/test_cgi.sh
 
 clean:
 	rm -rf $(OBJDIR)

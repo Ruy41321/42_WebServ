@@ -1,4 +1,5 @@
 #include "../include/WebServer.hpp"
+#include "../include/HttpResponse.hpp"
 
 WebServer::WebServer() : epollFd(-1), running(false), connManager(NULL) {
 }
@@ -205,6 +206,9 @@ void WebServer::run() {
             break;
         }
         
+        // Check CGI timeouts (even on timeout with no events)
+        checkCgiTimeouts();
+        
         if (numEvents == 0) {
             // Timeout - no events, continue loop to check running flag
             continue;
@@ -215,7 +219,47 @@ void WebServer::run() {
             int fd = events[i].data.fd;
             uint32_t activeEvents = events[i].events;
             
-            // Handle errors first
+            // Check if this is a CGI pipe
+            if (connManager->isCgiPipe(fd)) {
+                // Handle CGI pipe errors
+                if (activeEvents & (EPOLLERR | EPOLLHUP)) {
+                    ClientConnection* client = connManager->findClientByCgiPipe(fd);
+                    if (client) {
+                        // CGI process ended or error
+                        if (client->serverIndex < httpHandlers.size()) {
+                            CgiHandler* cgiHandler = httpHandlers[client->serverIndex]->getCgiHandler();
+                            if (cgiHandler) {
+                                // Read any remaining output
+                                if (fd == client->cgiOutputFd) {
+                                    cgiHandler->readFromCgi(client);
+                                }
+                                // Check if CGI completed
+                                cgiHandler->checkCgiComplete(client);
+                                // Build response
+                                cgiHandler->buildResponse(client);
+                                cgiHandler->cleanup(client);
+                            }
+                        }
+                        connManager->removeCgiPipes(client);
+                        client->state = ClientConnection::SENDING_RESPONSE;
+                        connManager->prepareResponseMode(client);
+                    }
+                    continue;
+                }
+                
+                // Handle CGI pipe read (output from CGI)
+                if (activeEvents & EPOLLIN) {
+                    handleCgiPipeRead(fd);
+                }
+                
+                // Handle CGI pipe write (input to CGI)
+                if (activeEvents & EPOLLOUT) {
+                    handleCgiPipeWrite(fd);
+                }
+                continue;
+            }
+            
+            // Handle errors first (non-CGI fds)
             if (activeEvents & (EPOLLERR | EPOLLHUP)) {
                 std::cerr << "Error/Hangup on FD " << fd << std::endl;
                 // Check if it's a server socket
@@ -335,7 +379,12 @@ void WebServer::handleClientRead(int clientSocket) {
         return;
     }
     
-    char buffer[4096];
+    // If client is in CGI_RUNNING state, we shouldn't be reading from client
+    if (client->state == ClientConnection::CGI_RUNNING) {
+        return;
+    }
+    
+    char buffer[1000000];
     
     // Read data from socket (non-blocking)
     ssize_t bytesRead = recv(clientSocket, buffer, sizeof(buffer), 0);
@@ -357,13 +406,218 @@ void WebServer::handleClientRead(int clientSocket) {
     // Append received data to request buffer
     client->requestBuffer.append(buffer, bytesRead);
     
+    // Check for headers completion if not already done
+    if (!client->headersComplete) {
+        size_t headerEnd = client->requestBuffer.find("\r\n\r\n");
+        if (headerEnd != std::string::npos) {
+            client->headersComplete = true;
+            client->headerEndOffset = headerEnd + 4; // Position after \r\n\r\n
+            
+            // Calculate body bytes already received with headers
+            if (client->requestBuffer.length() > client->headerEndOffset) {
+                client->bodyBytesReceived = client->requestBuffer.length() - client->headerEndOffset;
+            }
+            
+            // Determine max body size based on location (best match)
+            if (client->serverIndex < config.getServerCount()) {
+                const ServerConfig& server = config.getServer(client->serverIndex);
+                
+                // Extract path from request line
+                std::string requestPath;
+                size_t firstSpace = client->requestBuffer.find(' ');
+                if (firstSpace != std::string::npos) {
+                    size_t secondSpace = client->requestBuffer.find(' ', firstSpace + 1);
+                    if (secondSpace != std::string::npos) {
+                        requestPath = client->requestBuffer.substr(firstSpace + 1, secondSpace - firstSpace - 1);
+                        // Remove query string if present
+                        size_t queryPos = requestPath.find('?');
+                        if (queryPos != std::string::npos) {
+                            requestPath = requestPath.substr(0, queryPos);
+                        }
+                    }
+                }
+                
+                // Find best matching location for body size limit
+                size_t bestMatchLen = 0;
+                size_t locationMaxBodySize = 0;
+                bool locationHasBodySizeLimit = false;
+                
+                for (size_t i = 0; i < server.locations.size(); ++i) {
+                    const LocationConfig& loc = server.locations[i];
+                    // Check if path starts with location path (prefix match)
+                    // For proper matching, we need to ensure the location ends at a path boundary
+                    if (requestPath.compare(0, loc.path.length(), loc.path) == 0) {
+                        // Check that match is at a proper path boundary
+                        // Either: exact match, or followed by '/', or location ends with '/'
+                        bool validMatch = false;
+                        if (requestPath.length() == loc.path.length()) {
+                            // Exact match
+                            validMatch = true;
+                        } else if (loc.path[loc.path.length() - 1] == '/') {
+                            // Location ends with /
+                            validMatch = true;
+                        } else if (requestPath.length() > loc.path.length() && 
+                                   requestPath[loc.path.length()] == '/') {
+                            // Request path continues with /
+                            validMatch = true;
+                        }
+                        
+                        // For best match, prefer longer paths
+                        if (validMatch && loc.path.length() > bestMatchLen) {
+                            bestMatchLen = loc.path.length();
+                            if (loc.hasClientMaxBodySize) {
+                                locationMaxBodySize = loc.clientMaxBodySize;
+                                locationHasBodySizeLimit = true;
+                            } else {
+                                locationHasBodySizeLimit = false;
+                            }
+                        }
+                    }
+                }
+                
+                // Use location limit if explicitly configured, otherwise server limit
+                // Value of 0 means "unlimited" (no check)
+                if (locationHasBodySizeLimit) {
+                    client->maxBodySize = locationMaxBodySize;
+                } else {
+                    client->maxBodySize = server.clientMaxBodySize;
+                }
+                
+                // Early rejection: check Content-Length header against limit
+                // This prevents waiting for a huge body that will be rejected anyway
+                if (client->maxBodySize > 0) {
+                    std::string headers = client->requestBuffer.substr(0, client->headerEndOffset);
+                    size_t pos = headers.find("Content-Length:");
+                    if (pos == std::string::npos) {
+                        pos = headers.find("content-length:");
+                    }
+                    if (pos != std::string::npos) {
+                        size_t valueStart = headers.find_first_not_of(" \t", pos + 15);
+                        size_t valueEnd = headers.find("\r\n", valueStart);
+                        if (valueStart != std::string::npos && valueEnd != std::string::npos) {
+                            std::string lengthStr = headers.substr(valueStart, valueEnd - valueStart);
+                            size_t declaredLength = std::atoi(lengthStr.c_str());
+                            if (declaredLength > client->maxBodySize) {
+                                std::cout << "Content-Length " << declaredLength 
+                                          << " exceeds limit " << client->maxBodySize 
+                                          << " (early rejection)" << std::endl;
+                                client->responseBuffer = HttpResponse::build413(&server);
+                                client->state = ClientConnection::SENDING_RESPONSE;
+                                connManager->prepareResponseMode(client);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // Headers already complete, add new bytes to body count
+        client->bodyBytesReceived += bytesRead;
+    }
+    
+    // Progressive body size check (only after headers are complete and limit is set)
+    // maxBodySize == 0 means unlimited
+    // Skip this check for chunked encoding - will be checked after decoding
+    if (client->headersComplete && client->maxBodySize > 0) {
+        // Check if this is NOT chunked transfer encoding
+        std::string headers = client->requestBuffer.substr(0, client->headerEndOffset);
+        bool isChunked = (headers.find("Transfer-Encoding: chunked") != std::string::npos ||
+                          headers.find("transfer-encoding: chunked") != std::string::npos);
+        
+        if (!isChunked && client->bodyBytesReceived > client->maxBodySize) {
+            std::cout << "Body size " << client->bodyBytesReceived 
+                      << " exceeds limit " << client->maxBodySize 
+                      << " during reading (progressive check)" << std::endl;
+            
+            // Get server config for error page
+            const ServerConfig* serverConfig = NULL;
+            if (client->serverIndex < config.getServerCount()) {
+                serverConfig = &config.getServer(client->serverIndex);
+            }
+            
+            client->responseBuffer = HttpResponse::build413(serverConfig);
+            client->state = ClientConnection::SENDING_RESPONSE;
+            connManager->prepareResponseMode(client);
+            return;
+        }
+    }
+    
+    // Check if we need to wait for more body data (for POST/PUT)
+    if (client->headersComplete) {
+        std::string headers = client->requestBuffer.substr(0, client->headerEndOffset);
+        std::string method;
+        size_t firstSpace = headers.find(' ');
+        if (firstSpace != std::string::npos) {
+            method = headers.substr(0, firstSpace);
+        }
+        
+        // For POST and PUT, wait for complete body before processing
+        if (method == "POST" || method == "PUT") {
+            // Check for Transfer-Encoding: chunked
+            bool isChunked = (headers.find("Transfer-Encoding: chunked") != std::string::npos ||
+                              headers.find("transfer-encoding: chunked") != std::string::npos);
+            
+            if (isChunked) {
+                // For chunked encoding, wait for the final chunk marker "0\r\n\r\n"
+                std::string body = client->requestBuffer.substr(client->headerEndOffset);
+                // The final chunk is "0\r\n" followed by optional trailer headers and "\r\n"
+                // Minimum ending is "0\r\n\r\n"
+                if (body.find("0\r\n\r\n") == std::string::npos) {
+                    // Haven't received the final chunk yet, wait for more data
+                    return;
+                }
+            } else {
+                // Extract Content-Length from headers
+                size_t contentLength = 0;
+                bool hasContentLength = false;
+                size_t pos = headers.find("Content-Length:");
+                if (pos == std::string::npos) {
+                    pos = headers.find("content-length:");
+                }
+                
+                if (pos != std::string::npos) {
+                    hasContentLength = true;
+                    size_t valueStart = headers.find_first_not_of(" \t", pos + 15);
+                    size_t valueEnd = headers.find("\r\n", valueStart);
+                    if (valueStart != std::string::npos && valueEnd != std::string::npos) {
+                        std::string lengthStr = headers.substr(valueStart, valueEnd - valueStart);
+                        contentLength = std::atoi(lengthStr.c_str());
+                    }
+                }
+                
+                // POST/PUT requires Content-Length if not chunked
+                if (!hasContentLength) {
+                    std::cout << "Rejecting POST/PUT without Content-Length (not chunked)" << std::endl;
+                    client->responseBuffer = HttpResponse::build411();
+                    client->state = ClientConnection::SENDING_RESPONSE;
+                    connManager->prepareResponseMode(client);
+                    return;
+                }
+                
+                // If we have Content-Length, wait for the complete body
+                if (contentLength > 0 && client->bodyBytesReceived < contentLength) {
+                    return; // Wait for more data
+                }
+            }
+        }
+    }
+    
     // Use the appropriate HTTP handler for this server
     if (client->serverIndex < httpHandlers.size()) {
         httpHandlers[client->serverIndex]->handleRequest(client);
     }
     
+    // Check if CGI was started
+    if (client->state == ClientConnection::CGI_RUNNING) {
+        // Add CGI pipes to epoll
+        connManager->addCgiPipes(client);
+        return;
+    }
+    
     // If response is ready, prepare for sending
     if (!client->responseBuffer.empty()) {
+        client->state = ClientConnection::SENDING_RESPONSE;
         connManager->prepareResponseMode(client);
     }
 }
@@ -444,4 +698,128 @@ void WebServer::stop() {
     }
     
     std::cout << "Server shutdown complete" << std::endl;
+}
+
+// ==================== CGI Handling Methods ====================
+
+void WebServer::handleCgiPipeRead(int pipeFd) {
+    // Find the client associated with this CGI pipe
+    ClientConnection* client = connManager->findClientByCgiPipe(pipeFd);
+    if (!client) {
+        std::cerr << "CGI: No client found for pipe " << pipeFd << std::endl;
+        return;
+    }
+    
+    // If client is no longer in CGI_RUNNING state, skip processing
+    // (This can happen if timeout handler already processed this connection)
+    if (client->state != ClientConnection::CGI_RUNNING) {
+        return;
+    }
+    
+    if (client->serverIndex >= httpHandlers.size()) {
+        return;
+    }
+    
+    CgiHandler* cgiHandler = httpHandlers[client->serverIndex]->getCgiHandler();
+    if (!cgiHandler) {
+        return;
+    }
+    
+    // Read from CGI output
+    ssize_t bytesRead = cgiHandler->readFromCgi(client);
+    
+    if (bytesRead == 0 || bytesRead < 0) {
+        // EOF or error - CGI finished output
+        std::cout << "CGI: Output complete for client " << client->fd << std::endl;
+        
+        // Check if process has exited
+        cgiHandler->checkCgiComplete(client);
+        
+        // Build HTTP response from CGI output
+        cgiHandler->buildResponse(client);
+        
+        // Clean up CGI resources
+        connManager->removeCgiPipes(client);
+        cgiHandler->cleanup(client);
+        
+        // Prepare to send response
+        client->state = ClientConnection::SENDING_RESPONSE;
+        connManager->prepareResponseMode(client);
+    }
+}
+
+void WebServer::handleCgiPipeWrite(int pipeFd) {
+    // Find the client associated with this CGI pipe
+    ClientConnection* client = connManager->findClientByCgiPipe(pipeFd);
+    if (!client) {
+        std::cerr << "CGI: No client found for pipe " << pipeFd << std::endl;
+        return;
+    }
+    
+    if (client->serverIndex >= httpHandlers.size()) {
+        return;
+    }
+    
+    CgiHandler* cgiHandler = httpHandlers[client->serverIndex]->getCgiHandler();
+    if (!cgiHandler) {
+        return;
+    }
+    
+    // Write to CGI input
+    ssize_t bytesWritten = cgiHandler->writeToCgi(client);
+    
+    if (bytesWritten == 0 || client->cgiInputFd < 0) {
+        // All data written, remove input pipe from epoll (it's already closed by writeToCgi)
+        epoll_ctl(epollFd, EPOLL_CTL_DEL, pipeFd, NULL);
+    } else if (bytesWritten < 0) {
+        // Error writing to CGI
+        std::cerr << "CGI: Error writing to CGI for client " << client->fd << std::endl;
+        
+        // Kill CGI process and return error
+        cgiHandler->killCgi(client);
+        connManager->removeCgiPipes(client);
+        
+        const ServerConfig& server = config.getServer(client->serverIndex);
+        client->responseBuffer = HttpResponse::build500("CGI execution error", &server);
+        
+        client->state = ClientConnection::SENDING_RESPONSE;
+        connManager->prepareResponseMode(client);
+    }
+}
+
+void WebServer::checkCgiTimeouts() {
+    std::vector<ClientConnection*>& clients = connManager->getClients();
+    
+    for (size_t i = 0; i < clients.size(); ++i) {
+        ClientConnection* client = clients[i];
+        
+        if (client->state != ClientConnection::CGI_RUNNING) {
+            continue;
+        }
+        
+        if (client->serverIndex >= httpHandlers.size()) {
+            continue;
+        }
+        
+        CgiHandler* cgiHandler = httpHandlers[client->serverIndex]->getCgiHandler();
+        if (!cgiHandler) {
+            continue;
+        }
+        
+        // Check timeout (30 seconds default)
+        if (cgiHandler->hasTimedOut(client, CgiHandler::DEFAULT_CGI_TIMEOUT)) {
+            std::cerr << "CGI: Timeout for client " << client->fd << std::endl;
+            
+            // Kill the CGI process
+            cgiHandler->killCgi(client);
+            connManager->removeCgiPipes(client);
+            
+            // Send 504 Gateway Timeout
+            const ServerConfig& server = config.getServer(client->serverIndex);
+            client->responseBuffer = HttpResponse::build504(&server);
+            
+            client->state = ClientConnection::SENDING_RESPONSE;
+            connManager->prepareResponseMode(client);
+        }
+    }
 }

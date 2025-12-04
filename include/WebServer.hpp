@@ -16,6 +16,7 @@
 #include "Config.hpp"
 #include "ConnectionManager.hpp"
 #include "HttpRequest.hpp"
+#include "CgiHandler.hpp"
 
 // Structure to hold server socket information
 struct ServerSocket {
@@ -44,6 +45,11 @@ private:
     void handleClientRead(int clientSocket);
     void handleClientWrite(int clientSocket);
     bool isDuplicateBinding(const std::string& host, int port) const;
+    
+    // CGI handling
+    void handleCgiPipeRead(int pipeFd);
+    void handleCgiPipeWrite(int pipeFd);
+    void checkCgiTimeouts();
     
 public:
     WebServer();

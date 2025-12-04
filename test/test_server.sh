@@ -165,12 +165,13 @@ test_post_forbidden() {
     test_result "POST / without upload indicators returns 200" "200" "$response"
 }
 
-# Test 7: POST without Content-Length
+# Test 7: POST without Content-Length (rejected unless chunked)
 test_post_no_content_length() {
     echo -e "\n${BLUE}[Test 7] POST Without Content-Length${NC}"
     
-    # Send raw HTTP request without Content-Length
-    response=$(echo -ne "POST /uploads HTTP/1.0\r\nHost: $SERVER_HOST\r\n\r\ntest data" | \
+    # Send raw HTTP request without Content-Length (not chunked)
+    # Server requires Content-Length for POST/PUT if not chunked
+    response=$(echo -ne "POST /uploads/test_no_cl.txt HTTP/1.0\r\nHost: $SERVER_HOST\r\n\r\ntest data" | \
         nc -w 2 $SERVER_HOST $SERVER_PORT | head -1 | grep -o "[0-9]\{3\}")
     
     test_result "POST without Content-Length returns 411" "411" "$response"

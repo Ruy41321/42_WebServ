@@ -266,21 +266,21 @@ fi
 # ==================== SECTION 5: Body Size Limits ====================
 echo -e "\n${YELLOW}=== SECTION 5: Body Size Limits ===${NC}"
 
-# Test 5.1: Upload within size limit (1MB for port 8080)
-dd if=/dev/zero bs=1024 count=100 2>/dev/null > "$TEST_DIR/small.bin"
+# Test 5.1: Upload within size limit (10KB limit on /uploads)
+dd if=/dev/zero bs=1024 count=5 2>/dev/null > "$TEST_DIR/small.bin"
 RESPONSE=$(curl -s -i -X POST "$SERVER_URL/uploads/small_file.bin" \
     -H "Content-Type: application/octet-stream" \
     --data-binary @"$TEST_DIR/small.bin" 2>&1)
 STATUS=$(get_status "$RESPONSE")
-print_result "5.1 Upload within limit (100KB)" "201" "$STATUS"
+print_result "5.1 Upload within limit (5KB)" "201" "$STATUS"
 
-# Test 5.2: Upload exceeding size limit (should fail with 413)
-dd if=/dev/zero bs=1024 count=2000 2>/dev/null > "$TEST_DIR/large.bin"
+# Test 5.2: Upload exceeding size limit (10KB on /uploads, should fail with 413)
+dd if=/dev/zero bs=1024 count=15 2>/dev/null > "$TEST_DIR/large.bin"
 RESPONSE=$(curl -s -i -X POST "$SERVER_URL/uploads/large_file.bin" \
     -H "Content-Type: application/octet-stream" \
     --data-binary @"$TEST_DIR/large.bin" 2>&1)
 STATUS=$(get_status "$RESPONSE")
-print_result "5.2 Reject upload over limit (2MB)" "413" "$STATUS"
+print_result "5.2 Reject upload over limit (15KB > 10KB)" "413" "$STATUS"
 
 # ==================== SECTION 6: Missing Headers ====================
 echo -e "\n${YELLOW}=== SECTION 6: Error Handling ===${NC}"
