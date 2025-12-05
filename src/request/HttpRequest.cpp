@@ -212,6 +212,20 @@ void HttpRequest::handleRequest(ClientConnection* client) {
     if (!validateRequestLine(method, path, version, client)) {
         return;
     }
+
+    // Enforce Host header for HTTP/1.1 requests (RFC 7230)
+    if (version == "HTTP/1.1") {
+        std::string headersLower = headers;
+        for (size_t i = 0; i < headersLower.size(); ++i) {
+            if (headersLower[i] >= 'A' && headersLower[i] <= 'Z')
+                headersLower[i] = headersLower[i] + 32;
+        }
+        if (headersLower.find("host:") == std::string::npos) {
+            const ServerConfig& server = config.getServer(client->serverIndex);
+            client->responseBuffer = HttpResponse::build400(&server);
+            return;
+        }
+    }
     
     // Check for redirect first
     std::string redirectUrl;

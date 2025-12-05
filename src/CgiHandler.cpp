@@ -735,16 +735,9 @@ void CgiHandler::killCgi(ClientConnection* client) {
 }
 
 void CgiHandler::cleanup(ClientConnection* client) {
-    // Close any open pipes
-    if (client->cgiInputFd >= 0) {
-        close(client->cgiInputFd);
-        client->cgiInputFd = -1;
-    }
-    
-    if (client->cgiOutputFd >= 0) {
-        close(client->cgiOutputFd);
-        client->cgiOutputFd = -1;
-    }
+    // NOTE: Do NOT close pipes here - that's handled by ConnectionManager::removeCgiPipes
+    // which also removes them from epoll and the cgiPipeToClient map.
+    // Just reset the CGI state buffers.
     
     // Reset CGI state
     client->cgiBody.clear();

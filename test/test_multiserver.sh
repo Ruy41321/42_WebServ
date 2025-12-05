@@ -365,8 +365,8 @@ echo
 # Test 5.1: Invalid HTTP version
 echo "[Test 5.1] Invalid HTTP requests"
 INVALID_VERSION=$(echo -e "GET / HTTP/2.0\r\nHost: localhost\r\n\r\n" | nc -w 1 127.0.0.1 8080 2>/dev/null | head -n 1 | grep -o "HTTP/1.." || echo "ERROR")
-if [ "$INVALID_VERSION" = "HTTP/1.0" ] || [ "$INVALID_VERSION" = "HTTP/1.1" ]; then
-    echo -e "${GREEN}✓${NC} Server handles HTTP version gracefully: $INVALID_VERSION"
+if [ "$INVALID_VERSION" = "HTTP/1.1" ]; then
+    echo -e "${GREEN}✓${NC} Server responds with HTTP/1.1: $INVALID_VERSION"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
     echo -e "${YELLOW}Note:${NC} HTTP version handling: $INVALID_VERSION"
@@ -382,13 +382,24 @@ else
     echo -e "${YELLOW}Note:${NC} Malformed request response: $MALFORMED"
 fi
 
-# Test 5.3: Missing Host header
-MISSING_HOST=$(echo -e "GET / HTTP/1.0\r\n\r\n" | nc -w 1 127.0.0.1 8080 2>/dev/null | head -n 1 | grep -o "[0-9][0-9][0-9]" || echo "000")
-if [ "$MISSING_HOST" = "400" ] || [ "$MISSING_HOST" = "200" ]; then
-    echo -e "${GREEN}✓${NC} Request without Host header: $MISSING_HOST"
+# Test 5.3: Missing Host header - HTTP/1.1 requires Host, HTTP/1.0 doesn't
+# HTTP/1.1 without Host header should return 400 Bad Request
+MISSING_HOST_11=$(echo -e "GET / HTTP/1.1\r\n\r\n" | nc -w 1 127.0.0.1 8080 2>/dev/null | head -n 1 | grep -o "[0-9][0-9][0-9]" || echo "000")
+if [ "$MISSING_HOST_11" = "400" ]; then
+    echo -e "${GREEN}✓${NC} HTTP/1.1 without Host header returns 400: $MISSING_HOST_11"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
-    echo -e "${YELLOW}Note:${NC} Missing Host header response: $MISSING_HOST"
+    echo -e "${RED}✗${NC} HTTP/1.1 without Host header should return 400, got: $MISSING_HOST_11"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+fi
+
+# HTTP/1.0 without Host header should be accepted (200)
+MISSING_HOST_10=$(echo -e "GET / HTTP/1.0\r\n\r\n" | nc -w 1 127.0.0.1 8080 2>/dev/null | head -n 1 | grep -o "[0-9][0-9][0-9]" || echo "000")
+if [ "$MISSING_HOST_10" = "200" ]; then
+    echo -e "${GREEN}✓${NC} HTTP/1.0 without Host header accepted: $MISSING_HOST_10"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "${YELLOW}Note:${NC} HTTP/1.0 without Host header response: $MISSING_HOST_10"
 fi
 echo
 

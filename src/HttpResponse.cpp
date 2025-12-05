@@ -62,7 +62,7 @@ std::string HttpResponse::buildErrorResponse(int errorCode, const std::string& s
     }
     
     std::ostringstream oss;
-    oss << "HTTP/1.0 " << errorCode << " " << statusText << "\r\n"
+    oss << "HTTP/1.1 " << errorCode << " " << statusText << "\r\n"
         << "Content-Type: text/html\r\n"
         << "Content-Length: " << body.length() << "\r\n"
         << "\r\n"
@@ -72,7 +72,7 @@ std::string HttpResponse::buildErrorResponse(int errorCode, const std::string& s
 
 std::string HttpResponse::build200(const std::string& contentType, const std::string& body) {
     std::ostringstream oss;
-    oss << "HTTP/1.0 200 OK\r\n"
+    oss << "HTTP/1.1 200 OK\r\n"
         << "Content-Type: " << contentType << "\r\n"
         << "Content-Length: " << body.length() << "\r\n"
         << "\r\n"
@@ -82,7 +82,7 @@ std::string HttpResponse::build200(const std::string& contentType, const std::st
 
 std::string HttpResponse::build201(const std::string& body) {
     std::ostringstream oss;
-    oss << "HTTP/1.0 201 Created\r\n"
+    oss << "HTTP/1.1 201 Created\r\n"
         << "Content-Type: text/html\r\n"
         << "Content-Length: " << body.length() << "\r\n"
         << "\r\n"
@@ -92,7 +92,7 @@ std::string HttpResponse::build201(const std::string& body) {
 
 std::string HttpResponse::build204() {
     std::ostringstream oss;
-    oss << "HTTP/1.0 204 No Content\r\n"
+    oss << "HTTP/1.1 204 No Content\r\n"
         << "\r\n";
     return oss.str();
 }
@@ -100,7 +100,7 @@ std::string HttpResponse::build204() {
 std::string HttpResponse::build301(const std::string& location) {
     std::string body = "<html><body><h1>301 Moved Permanently</h1><p>The document has moved <a href=\"" + location + "\">here</a>.</p></body></html>";
     std::ostringstream oss;
-    oss << "HTTP/1.0 301 Moved Permanently\r\n"
+    oss << "HTTP/1.1 301 Moved Permanently\r\n"
         << "Location: " << location << "\r\n"
         << "Content-Type: text/html\r\n"
         << "Content-Length: " << body.length() << "\r\n"
@@ -112,7 +112,7 @@ std::string HttpResponse::build301(const std::string& location) {
 std::string HttpResponse::build302(const std::string& location) {
     std::string body = "<html><body><h1>302 Found</h1><p>The document has moved <a href=\"" + location + "\">here</a>.</p></body></html>";
     std::ostringstream oss;
-    oss << "HTTP/1.0 302 Found\r\n"
+    oss << "HTTP/1.1 302 Found\r\n"
         << "Location: " << location << "\r\n"
         << "Content-Type: text/html\r\n"
         << "Content-Length: " << body.length() << "\r\n"
@@ -226,7 +226,7 @@ std::string HttpResponse::buildHeadResponse(const std::string& fullPath, const S
     if (!file.is_open()) {
         // Return 404 headers only (no body for HEAD)
         std::ostringstream oss;
-        oss << "HTTP/1.0 404 Not Found\r\n"
+        oss << "HTTP/1.1 404 Not Found\r\n"
             << "Content-Type: text/html\r\n"
             << "Content-Length: 0\r\n"
             << "\r\n";
@@ -243,7 +243,7 @@ std::string HttpResponse::buildHeadResponse(const std::string& fullPath, const S
     
     // Return headers only (no body for HEAD)
     std::ostringstream oss;
-    oss << "HTTP/1.0 200 OK\r\n"
+    oss << "HTTP/1.1 200 OK\r\n"
         << "Content-Type: " << contentType << "\r\n"
         << "Content-Length: " << fileSize << "\r\n"
         << "\r\n";

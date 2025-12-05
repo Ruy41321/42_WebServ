@@ -120,11 +120,12 @@ echo ""
 echo "Test 5: Simulating slow client sending body in chunks"
 # Use netcat to send data incrementally
 {
-    # Send HTTP request headers
-    printf "POST /uploads/slow_test.txt HTTP/1.0\r\n"
-    printf "Host: ${HOST}\r\n"
+    # Send HTTP request headers (HTTP/1.1 requires Host header)
+    printf "POST /uploads/slow_test.txt HTTP/1.1\r\n"
+    printf "Host: ${HOST}:${PORT}\r\n"
     printf "Content-Type: text/plain\r\n"
     printf "Content-Length: 2097152\r\n"  # 2MB
+    printf "Connection: close\r\n"
     printf "\r\n"
     
     # Send body in small chunks with delays

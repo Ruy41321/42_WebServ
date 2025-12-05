@@ -169,9 +169,9 @@ test_post_forbidden() {
 test_post_no_content_length() {
     echo -e "\n${BLUE}[Test 7] POST Without Content-Length${NC}"
     
-    # Send raw HTTP request without Content-Length (not chunked)
+    # Send raw HTTP/1.1 request without Content-Length (not chunked)
     # Server requires Content-Length for POST/PUT if not chunked
-    response=$(echo -ne "POST /uploads/test_no_cl.txt HTTP/1.0\r\nHost: $SERVER_HOST\r\n\r\ntest data" | \
+    response=$(echo -ne "POST /uploads/test_no_cl.txt HTTP/1.1\r\nHost: $SERVER_HOST\r\n\r\ntest data" | \
         nc -w 2 $SERVER_HOST $SERVER_PORT | head -1 | grep -o "[0-9]\{3\}")
     
     test_result "POST without Content-Length returns 411" "411" "$response"
@@ -194,9 +194,9 @@ test_concurrent_requests() {
     local temp_dir=$(mktemp -d)
     local pids=()
     
-    # Send 5 concurrent requests with timeout and HTTP/1.0
+    # Send 5 concurrent requests with timeout (HTTP/1.1)
     for i in {1..5}; do
-        curl -s -w "%{http_code}" -o /dev/null --http1.0 --max-time 2 "$SERVER_URL/" > "$temp_dir/response_$i.txt" &
+        curl -s -w "%{http_code}" -o /dev/null --max-time 2 "$SERVER_URL/" > "$temp_dir/response_$i.txt" &
         pids+=($!)
     done
     
@@ -226,14 +226,18 @@ test_concurrent_requests() {
     fi
 }
 
-# Test 10: Server handles connection close
+# Test 10: Server handles connection close (HTTP/1.1 keep-alive)
 test_connection_close() {
-    echo -e "\n${BLUE}[Test 10] Connection Close (HTTP/1.0)${NC}"
+    echo -e "\n${BLUE}[Test 10] Connection handling (HTTP/1.1)${NC}"
     
-    response=$(curl -s -I "$SERVER_URL/" | grep -i "connection")
+    # HTTP/1.1 should keep connection alive by default
+    # Test with explicit Connection: close header
+    response=$(curl -s -o /dev/null -w "%{http_code}" -H "Connection: close" "$SERVER_URL/")
+    test_result "HTTP/1.1 with Connection: close returns 200" "200" "$response"
     
-    # HTTP/1.0 closes connection by default
-    test_result "Server closes connection after response" "true" "true"
+    # Test keep-alive (default in HTTP/1.1)
+    response=$(curl -s -o /dev/null -w "%{http_code}" "$SERVER_URL/")
+    test_result "HTTP/1.1 keep-alive request returns 200" "200" "$response"
 }
 
 # Test 11: DELETE existing file

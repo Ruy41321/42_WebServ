@@ -1,5 +1,7 @@
 #include "../include/WebServer.hpp"
 #include "../include/HttpResponse.hpp"
+#include <sstream>
+#include <cctype>
 
 WebServer::WebServer() : epollFd(-1), running(false), connManager(NULL) {
 }
@@ -389,9 +391,13 @@ void WebServer::handleClientRead(int clientSocket) {
     // Read data from socket (non-blocking)
     ssize_t bytesRead = recv(clientSocket, buffer, sizeof(buffer), 0);
     
-    // Check return value only (no errno checks)
+    // Handle EAGAIN/EWOULDBLOCK - no data available yet, just return
     if (bytesRead < 0) {
-        // Error occurred (including EAGAIN/EWOULDBLOCK)
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return;
+        }
+        // Real error occurred
+        std::cerr << "recv error on fd=" << clientSocket << ": " << strerror(errno) << std::endl;
         connManager->removeClient(clientSocket);
         return;
     }
@@ -405,8 +411,6 @@ void WebServer::handleClientRead(int clientSocket) {
     
     // Append received data to request buffer
     client->requestBuffer.append(buffer, bytesRead);
-    
-    // Check for headers completion if not already done
     if (!client->headersComplete) {
         size_t headerEnd = client->requestBuffer.find("\r\n\r\n");
         if (headerEnd != std::string::npos) {
@@ -632,7 +636,55 @@ void WebServer::handleClientWrite(int clientSocket) {
     
     // Check if there's data to send
     if (client->isResponseComplete()) {
-        // Nothing to send, close connection (HTTP/1.0 behavior)
+        // Nothing to send — treat as response complete. Decide keep-alive per HTTP version/Connection header.
+        // Determine request headers if available
+        std::string reqHeaders;
+        if (client->headerEndOffset > 0 && client->requestBuffer.length() >= client->headerEndOffset) {
+            reqHeaders = client->requestBuffer.substr(0, client->headerEndOffset);
+        }
+
+        // Parse request line to get HTTP version
+        std::string version;
+        size_t firstLineEnd = reqHeaders.find("\r\n");
+        if (firstLineEnd != std::string::npos) {
+            std::string firstLine = reqHeaders.substr(0, firstLineEnd);
+            std::istringstream fls(firstLine);
+            std::string method, path;
+            fls >> method >> path >> version;
+        }
+
+        // Lowercase headers for case-insensitive search
+        std::string headersLower = reqHeaders;
+        for (size_t i = 0; i < headersLower.size(); ++i) {
+            headersLower[i] = std::tolower(headersLower[i]);
+        }
+
+        bool hasConnClose = (headersLower.find("connection: close") != std::string::npos);
+        bool hasConnKeepAlive = (headersLower.find("connection: keep-alive") != std::string::npos);
+
+        bool keepAlive = false;
+        if (version == "HTTP/1.1") {
+            keepAlive = !hasConnClose; // default keep-alive in HTTP/1.1
+        } else if (version == "HTTP/1.0") {
+            keepAlive = hasConnKeepAlive; // only keep if client requested it
+        }
+
+        if (keepAlive) {
+            // Reset client to read next request
+            client->clearBuffers();
+            client->state = ClientConnection::READING_REQUEST;
+
+            // Modify epoll to monitor for reading again
+            struct epoll_event ev;
+            ev.events = EPOLLIN | EPOLLRDHUP;
+            ev.data.fd = clientSocket;
+            if (epoll_ctl(epollFd, EPOLL_CTL_MOD, clientSocket, &ev) < 0) {
+                connManager->removeClient(clientSocket);
+                return;
+            }
+            return;
+        }
+
         connManager->removeClient(clientSocket);
         return;
     }
@@ -655,16 +707,60 @@ void WebServer::handleClientWrite(int clientSocket) {
     
     // Check if all data has been sent
     if (client->isResponseComplete()) {
-        // Extract response code from first line (e.g., "HTTP/1.0 200 OK")
+        // Extract response code from first line (e.g., "HTTP/1.1 200 OK")
         std::string statusLine;
         size_t endOfLine = client->responseBuffer.find("\r\n");
         if (endOfLine != std::string::npos) {
             statusLine = client->responseBuffer.substr(0, endOfLine);
         }
-        // Response complete, close connection (HTTP/1.0 default)
+
+        // Determine keep-alive based on the request version and Connection header
+        std::string reqHeaders;
+        if (client->headerEndOffset > 0 && client->requestBuffer.length() >= client->headerEndOffset) {
+            reqHeaders = client->requestBuffer.substr(0, client->headerEndOffset);
+        }
+
+        std::string version;
+        size_t firstLineEnd = reqHeaders.find("\r\n");
+        if (firstLineEnd != std::string::npos) {
+            std::string firstLine = reqHeaders.substr(0, firstLineEnd);
+            std::istringstream fls(firstLine);
+            std::string method, path;
+            fls >> method >> path >> version;
+        }
+
+        std::string headersLower = reqHeaders;
+        for (size_t i = 0; i < headersLower.size(); ++i) {
+            headersLower[i] = std::tolower(headersLower[i]);
+        }
+        bool hasConnClose = (headersLower.find("connection: close") != std::string::npos);
+        bool hasConnKeepAlive = (headersLower.find("connection: keep-alive") != std::string::npos);
+
+        bool keepAlive = false;
+        if (version == "HTTP/1.1") {
+            keepAlive = !hasConnClose;
+        } else if (version == "HTTP/1.0") {
+            keepAlive = hasConnKeepAlive;
+        }
+
         std::cout << "Response sent to socket " << clientSocket 
                   << " [" << statusLine << "]" << std::endl;
-        connManager->removeClient(clientSocket);
+
+        if (keepAlive) {
+            // Prepare to read next request on same connection
+            client->clearBuffers();
+            client->state = ClientConnection::READING_REQUEST;
+
+            struct epoll_event ev;
+            ev.events = EPOLLIN | EPOLLRDHUP;
+            ev.data.fd = clientSocket;
+            if (epoll_ctl(epollFd, EPOLL_CTL_MOD, clientSocket, &ev) < 0) {
+                connManager->removeClient(clientSocket);
+                return;
+            }
+        } else {
+            connManager->removeClient(clientSocket);
+        }
     }
     // If not complete, EPOLLOUT will trigger again when socket is ready
 }
