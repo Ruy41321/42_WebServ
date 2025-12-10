@@ -8,30 +8,26 @@
 
 class ConnectionManager {
 private:
-    std::vector<ClientConnection*> clients;
-    std::map<int, ClientConnection*> cgiPipeToClient;  // Map CGI pipe FDs to client
-    int epollFd;
-    
+	std::vector<ClientConnection*> clients;
+	std::map<int, ClientConnection*> cgiPipeToClient;
+	int epollFd;
+
 public:
-    ConnectionManager(int epoll_fd);
-    ~ConnectionManager();
-    
-    void addClient(int clientSocket, size_t serverIndex);
-    void removeClient(int clientSocket);
-    ClientConnection* findClient(int fd);
-    void closeAllClients();
-    
-    void prepareResponseMode(ClientConnection* client);
-    
-    // CGI pipe management
-    void addCgiPipes(ClientConnection* client);
-    void removeCgiPipes(ClientConnection* client);
-    void removeSingleCgiPipe(int pipeFd);  // Remove just one pipe from map (for partial cleanup)
-    ClientConnection* findClientByCgiPipe(int pipeFd);
-    bool isCgiPipe(int fd);
-    
-    // Get all clients (for timeout checking)
-    std::vector<ClientConnection*>& getClients();
+	ConnectionManager(int epoll_fd);
+	~ConnectionManager();
+
+	void addClient(int clientSocket, size_t serverIndex);
+	void removeClient(int clientSocket);
+	ClientConnection* findClient(int fd);
+	void closeAllClients();
+	void prepareResponseMode(ClientConnection* client);
+
+	void addCgiPipes(ClientConnection* client);
+	void removeCgiPipes(ClientConnection* client);
+	void removeSingleCgiPipe(int pipeFd);
+	ClientConnection* findClientByCgiPipe(int pipeFd);
+	bool isCgiPipe(int fd);
+	std::vector<ClientConnection*>& getClients();
 };
 
 #endif

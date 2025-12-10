@@ -18,12 +18,11 @@
 #include "HttpRequest.hpp"
 #include "CgiHandler.hpp"
 
-// Structure to hold server socket information
 struct ServerSocket {
-    int fd;                     // Socket file descriptor
-    std::string host;           // Host/interface
-    int port;                   // Port number
-    size_t serverIndex;         // Index in config.servers[]
+    int fd;
+    std::string host;
+    int port;
+    size_t serverIndex;
     
     ServerSocket() : fd(-1), port(0), serverIndex(0) {}
 };
@@ -31,24 +30,47 @@ struct ServerSocket {
 class WebServer {
 private:
     Config config;
-    std::vector<ServerSocket> serverSockets;  // Multiple server sockets
-    std::map<int, size_t> fdToServerIndex;    // Map socket FD to server config index
+    std::vector<ServerSocket> serverSockets;
+    std::map<int, size_t> fdToServerIndex;
     int epollFd;
     bool running;
     
     ConnectionManager* connManager;
-    std::vector<HttpRequest*> httpHandlers;   // One handler per server config
+    std::vector<HttpRequest*> httpHandlers;
     
     bool setupServerSocket(const ServerConfig& serverConfig, size_t index);
     void setupEpoll();
+    bool isDuplicateBinding(const std::string& host, int port) const;
+    void cleanupOnError();
+    
+    bool setNonBlocking(int fd);
+    bool addToEpoll(int fd, uint32_t events);
+    bool isServerSocket(int fd);
+    
+    void processEvents(struct epoll_event* events, int numEvents);
     void handleNewConnection(int serverFd);
     void handleClientRead(int clientSocket);
     void handleClientWrite(int clientSocket);
-    bool isDuplicateBinding(const std::string& host, int port) const;
+    void handleErrorEvent(int fd);
+    void handleClientEvent(int fd, uint32_t activeEvents);
+    void handleCgiPipeEvent(int fd, uint32_t activeEvents);
     
-    // CGI handling
+    bool parseHeaders(ClientConnection* client, size_t oldBufferSize);
+    void determineMaxBodySize(ClientConnection* client);
+    std::string extractRequestPath(ClientConnection* client);
+    bool isValidPathMatch(const std::string& requestPath, const std::string& locPath);
+    bool checkContentLengthHeader(ClientConnection* client);
+    bool checkBodySize(ClientConnection* client);
+    bool waitForCompleteBody(ClientConnection* client);
+    std::string extractMethod(const std::string& headers);
+    void processRequest(ClientConnection* client);
+    
+    bool shouldKeepAlive(ClientConnection* client);
+    void prepareForNextRequest(ClientConnection* client, int clientSocket);
+    
     void handleCgiPipeRead(int pipeFd);
     void handleCgiPipeWrite(int pipeFd);
+    void completeCgiRequest(ClientConnection* client, int fd);
     void checkCgiTimeouts();
     
 public:

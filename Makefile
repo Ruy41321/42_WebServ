@@ -15,7 +15,8 @@ SRCS = $(SRCDIR)/main.cpp \
        $(SRCDIR)/ClientConnection.cpp \
        $(SRCDIR)/ConnectionManager.cpp \
        $(SRCDIR)/HttpResponse.cpp \
-       $(SRCDIR)/CgiHandler.cpp
+       $(SRCDIR)/CgiHandler.cpp \
+       $(SRCDIR)/StringUtils.cpp
 
 # Request handling files (refactored)
 SRCS += $(SRCDIR)/request/HttpRequest.cpp \
