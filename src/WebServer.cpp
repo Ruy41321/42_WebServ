@@ -386,7 +386,7 @@ void WebServer::handleClientRead(int clientSocket) {
         return;
     }
     
-    char buffer[1000000];
+    char buffer[1000000];  // 1MB - original size, matches kernel default SO_RCVBUF
     
     // Read data from socket (non-blocking)
     ssize_t bytesRead = recv(clientSocket, buffer, sizeof(buffer), 0);
@@ -410,9 +410,14 @@ void WebServer::handleClientRead(int clientSocket) {
     }
     
     // Append received data to request buffer
+    size_t oldBufferSize = client->requestBuffer.size();
     client->requestBuffer.append(buffer, bytesRead);
+    
     if (!client->headersComplete) {
-        size_t headerEnd = client->requestBuffer.find("\r\n\r\n");
+        // Optimize header search: only search in newly received data + small overlap
+        // to avoid searching the entire buffer repeatedly for large uploads
+        size_t searchStart = (oldBufferSize > 3) ? (oldBufferSize - 3) : 0;
+        size_t headerEnd = client->requestBuffer.find("\r\n\r\n", searchStart);
         if (headerEnd != std::string::npos) {
             client->headersComplete = true;
             client->headerEndOffset = headerEnd + 4; // Position after \r\n\r\n
@@ -861,13 +866,20 @@ void WebServer::handleCgiPipeWrite(int pipeFd) {
         return;
     }
     
+    // Check if all data is already written
+    if (client->cgiBodyOffset >= client->cgiBody.size()) {
+        // All data written, close and remove only the input pipe
+        epoll_ctl(epollFd, EPOLL_CTL_DEL, pipeFd, NULL);
+        connManager->removeSingleCgiPipe(pipeFd);
+        close(pipeFd);
+        client->cgiInputFd = -1;
+        return;
+    }
+    
     // Write to CGI input
     ssize_t bytesWritten = cgiHandler->writeToCgi(client);
     
-    if (bytesWritten == 0 || client->cgiInputFd < 0) {
-        // All data written, remove input pipe from epoll (it's already closed by writeToCgi)
-        epoll_ctl(epollFd, EPOLL_CTL_DEL, pipeFd, NULL);
-    } else if (bytesWritten < 0) {
+    if (bytesWritten < 0) {
         // Error writing to CGI
         std::cerr << "CGI: Error writing to CGI for client " << client->fd << std::endl;
         
@@ -881,6 +893,7 @@ void WebServer::handleCgiPipeWrite(int pipeFd) {
         client->state = ClientConnection::SENDING_RESPONSE;
         connManager->prepareResponseMode(client);
     }
+    // If bytesWritten >= 0, keep monitoring for more writes
 }
 
 void WebServer::checkCgiTimeouts() {

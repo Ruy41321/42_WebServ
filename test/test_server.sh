@@ -26,6 +26,9 @@ TESTS_PASSED=0
 TESTS_FAILED=0
 TESTS_TOTAL=0
 
+# Source logging helper
+source "$SCRIPT_DIR/test_logging_helper.sh"
+
 # Cleanup function
 cleanup() {
     echo -e "\n${YELLOW}Cleaning up...${NC}"
@@ -38,6 +41,10 @@ cleanup() {
 setup() {
     echo -e "${BLUE}=== WebServ Test Suite ===${NC}\n"
     
+    # Setup logging for this test
+    setup_test_logging "test_server"
+    echo -e "${YELLOW}Server output log: $TEST_LOG_FILE${NC}\n"
+    
     # Create test files directory
     mkdir -p "$TEST_FILES_DIR"
     
@@ -48,11 +55,10 @@ setup() {
     echo "Small test file content" > "$TEST_FILES_DIR/small.txt"
     dd if=/dev/zero of="$TEST_FILES_DIR/large.bin" bs=1M count=2 2>/dev/null
     
-    # Start server
+    # Start server with logging
     echo -e "${YELLOW}Starting server...${NC}"
     cd "$PROJECT_DIR"
-    $WEBSERV_BIN $CONFIG_FILE > /tmp/webserv_test.log 2>&1 &
-    SERVER_PID=$!
+    start_server_with_logging "$CONFIG_FILE"
     sleep 2
     
     # Check if server started

@@ -5,6 +5,8 @@ CXXFLAGS = -Wall -Wextra -Werror -std=c++98 -I./include
 TESTDIR = test
 SRCDIR = src
 OBJDIR = obj
+REDIRECT_LOG_FILE = /tmp/webserver_log.txt
+REDIRECT_STATE_FILE = .redirect_enabled
 
 # Main source files
 SRCS = $(SRCDIR)/main.cpp \
@@ -34,7 +36,22 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 run: $(NAME)
-	./$(NAME) config/default.conf
+	@if [ -f $(REDIRECT_STATE_FILE) ]; then \
+		echo "Running with output redirected to $(REDIRECT_LOG_FILE)"; \
+		./$(NAME) config/default.conf >> $(REDIRECT_LOG_FILE) 2>&1; \
+	else \
+		./$(NAME) config/default.conf; \
+	fi
+
+toggle_redirection:
+	@if [ -f $(REDIRECT_STATE_FILE) ]; then \
+		rm $(REDIRECT_STATE_FILE); \
+		echo "Redirection DISABLED - next 'make run' will output to terminal"; \
+	else \
+		touch $(REDIRECT_STATE_FILE); \
+		echo "Redirection ENABLED - next 'make run' will output to $(REDIRECT_LOG_FILE)"; \
+	fi
+	@echo "Current state: $$([ -f $(REDIRECT_STATE_FILE) ] && echo 'ENABLED' || echo 'DISABLED')"
 
 subject_test: $(NAME)
 	@echo "Checking if server is running on port 8084..."
@@ -63,6 +80,8 @@ debug_run: debug
 test: $(NAME)
 	@echo "Running automated tests..."
 	$(TESTDIR)/test_server.sh
+	$(TESTDIR)/test_http11.sh
+	$(TESTDIR)/test_body_size_limit.sh
 	$(TESTDIR)/test_multiserver.sh
 	$(TESTDIR)/test_config_errors.sh
 	$(TESTDIR)/test_uploads.sh
@@ -75,5 +94,6 @@ fclean: clean
 	rm -f $(NAME)
 
 re: fclean all
+
 
 .PHONY: all clean fclean re run build_test test_config test

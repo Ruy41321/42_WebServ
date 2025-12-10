@@ -26,6 +26,7 @@ public:
     // CGI pipe management
     void addCgiPipes(ClientConnection* client);
     void removeCgiPipes(ClientConnection* client);
+    void removeSingleCgiPipe(int pipeFd);  // Remove just one pipe from map (for partial cleanup)
     ClientConnection* findClientByCgiPipe(int pipeFd);
     bool isCgiPipe(int fd);
     

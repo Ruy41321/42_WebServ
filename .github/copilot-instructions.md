@@ -20,7 +20,7 @@ This is a C++98 HTTP web server implementation for the 42 school curriculum. The
 - No checking `errno` after read/write operations to adjust behavior
 
 ### HTTP Protocol Implementation
-- Support HTTP/1.0 protocol
+- Support HTTP/1.1 protocol
 - Implement GET, POST, and DELETE methods
 - Accurate HTTP response status codes (200, 404, 500, etc.)
 - Handle chunked transfer encoding (un-chunk before passing to CGI)

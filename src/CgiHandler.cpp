@@ -543,9 +543,8 @@ ssize_t CgiHandler::writeToCgi(ClientConnection* client) {
     }
     
     if (client->cgiBodyOffset >= client->cgiBody.size()) {
-        // All data written, close input pipe to signal EOF
-        close(client->cgiInputFd);
-        client->cgiInputFd = -1;
+        // All data written - signal done by returning 0
+        // NOTE: Do NOT close here - let removeCgiPipes handle it
         return 0;
     }
     
@@ -556,16 +555,11 @@ ssize_t CgiHandler::writeToCgi(ClientConnection* client) {
     
     if (written > 0) {
         client->cgiBodyOffset += written;
-        
-        // Check if done writing
-        if (client->cgiBodyOffset >= client->cgiBody.size()) {
-            close(client->cgiInputFd);
-            client->cgiInputFd = -1;
-        }
+        // NOTE: Do NOT close here even if done - let removeCgiPipes handle it
     } else if (written < 0) {
         // Error or EAGAIN
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return 0;  // Would block, try again later
+            return 1;  // Would block, try again later (return positive to indicate not done)
         }
         return -1;  // Real error
     }
@@ -585,13 +579,12 @@ ssize_t CgiHandler::readFromCgi(ClientConnection* client) {
         client->cgiOutputBuffer.append(buffer, bytesRead);
     } else if (bytesRead == 0) {
         // EOF - CGI finished output
-        close(client->cgiOutputFd);
-        client->cgiOutputFd = -1;
+        // NOTE: Do NOT close here - let removeCgiPipes handle it
         return 0;
     } else {
         // Error or EAGAIN
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return 0;  // Would block, try again later
+            return 1;  // Would block, try again later (return positive to indicate still active)
         }
         return -1;  // Real error
     }

@@ -3,7 +3,9 @@
 # Configuration Error Handling Tests
 # Tests that the server properly rejects invalid configurations
 
-WEBSERV_BIN="./webserv"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+WEBSERV_BIN="$PROJECT_DIR/webserv"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -11,6 +13,12 @@ NC='\033[0m'
 
 TESTS_PASSED=0
 TESTS_FAILED=0
+
+# Source logging helper
+source "$SCRIPT_DIR/test_logging_helper.sh"
+
+# Setup logging for this test
+setup_test_logging "test_config_errors"
 
 check_result() {
     local expected=$1
@@ -30,10 +38,11 @@ echo "========================================"
 echo "  Configuration Error Handling Tests"
 echo "========================================"
 echo
+echo -e "${YELLOW}Server output log: $TEST_LOG_FILE${NC}\n"
 
 # Test 1: Duplicate port binding
 echo "[Test 1] Duplicate port binding detection"
-OUTPUT=$(timeout 2 $WEBSERV_BIN config/duplicate_test.conf 2>&1)
+OUTPUT=$(timeout 2 $WEBSERV_BIN $PROJECT_DIR/config/duplicate_test.conf 2>&1)
 if echo "$OUTPUT" | grep -qi "duplicate.*binding\|address already in use"; then
     echo -e "${GREEN}✓${NC} Duplicate binding correctly rejected"
     TESTS_PASSED=$((TESTS_PASSED + 1))

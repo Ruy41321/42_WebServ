@@ -18,6 +18,14 @@ PORT="8080"
 BASE_URL="http://${HOST}:${PORT}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+WEBSERV_BIN="$PROJECT_DIR/webserv"
+CONFIG_FILE="$PROJECT_DIR/config/default.conf"
+
+# Source logging helper
+source "$SCRIPT_DIR/test_logging_helper.sh"
+
+# Setup logging for this test
+setup_test_logging "test_body_size_limit"
 
 # Cleanup function
 cleanup() {
@@ -32,8 +40,7 @@ echo -e "${YELLOW}Starting server...${NC}"
 pkill -9 webserv 2>/dev/null
 sleep 1
 cd "$PROJECT_DIR"
-./webserv config/default.conf > /tmp/webserv_body_test.log 2>&1 &
-SERVER_PID=$!
+start_server_with_logging "$CONFIG_FILE"
 sleep 2
 
 # Verify server is running
@@ -41,7 +48,8 @@ if ! ps -p $SERVER_PID > /dev/null 2>&1; then
     echo -e "${RED}Failed to start server${NC}"
     exit 1
 fi
-echo -e "${GREEN}Server started (PID: $SERVER_PID)${NC}\n"
+echo -e "${GREEN}Server started (PID: $SERVER_PID)${NC}"
+echo -e "${YELLOW}Server output log: $TEST_LOG_FILE${NC}\n"
 
 echo -e "${YELLOW}=== Body Size Limit Tests ===${NC}"
 echo ""
@@ -94,9 +102,12 @@ RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
 if [ "$RESPONSE" = "413" ]; then
     echo -e "${GREEN}PASSED${NC}: Large chunked body rejected (HTTP 413)"
     ((TESTS_PASSED++))
+elif [ -z "$RESPONSE" ] || [ "$RESPONSE" = "000" ]; then
+    echo -e "${GREEN}PASSED${NC}: Request rejected (connection closed early)"
+    ((TESTS_PASSED++))
 else
-    echo -e "${YELLOW}INFO${NC}: Response was HTTP $RESPONSE (may depend on max body size config)"
-    # Not counting as failure since limit may vary
+    echo -e "${RED}FAILED${NC}: Expected 413, got HTTP $RESPONSE"
+    ((TESTS_FAILED++))
 fi
 
 # Test 4: PUT with large body
@@ -111,8 +122,12 @@ RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
 if [ "$RESPONSE" = "413" ]; then
     echo -e "${GREEN}PASSED${NC}: Large PUT body rejected (HTTP 413)"
     ((TESTS_PASSED++))
+elif [ -z "$RESPONSE" ] || [ "$RESPONSE" = "000" ]; then
+    echo -e "${GREEN}PASSED${NC}: Request rejected (connection closed early)"
+    ((TESTS_PASSED++))
 else
-    echo -e "${YELLOW}INFO${NC}: Response was HTTP $RESPONSE (may depend on max body size config)"
+    echo -e "${RED}FAILED${NC}: Expected 413, got HTTP $RESPONSE"
+    ((TESTS_FAILED++))
 fi
 
 # Test 5: Incremental send with slow client simulation
@@ -163,8 +178,12 @@ if [ -f www/cgi-bin/test.php ] || [ -f www/cgi-bin/test.py ]; then
     if [ "$RESPONSE" = "413" ]; then
         echo -e "${GREEN}PASSED${NC}: Large CGI POST body rejected (HTTP 413)"
         ((TESTS_PASSED++))
+    elif [ -z "$RESPONSE" ] || [ "$RESPONSE" = "000" ]; then
+        echo -e "${GREEN}PASSED${NC}: Request rejected (connection closed early)"
+        ((TESTS_PASSED++))
     else
-        echo -e "${YELLOW}INFO${NC}: Response was HTTP $RESPONSE"
+        echo -e "${RED}FAILED${NC}: Expected 413, got HTTP $RESPONSE"
+        ((TESTS_FAILED++))
     fi
 else
     echo -e "${YELLOW}SKIPPED${NC}: No CGI script found"

@@ -9,18 +9,28 @@
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
 HOST="127.0.0.1"
 PORT="8084" #the port where the server specified for cgi test is running
 BASE_URL="http://${HOST}:${PORT}"
-CONFIG_FILE="config/default.conf"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+CONFIG_FILE="$PROJECT_DIR/config/default.conf"
+WEBSERV_BIN="$PROJECT_DIR/webserv"
 SERVER_STARTED=false
 
 # Counters
 PASSED=0
 FAILED=0
+
+# Source logging helper
+source "$SCRIPT_DIR/test_logging_helper.sh"
+
+# Setup logging for this test
+setup_test_logging "test_cgi"
 
 # Helper functions
 pass_test() {
@@ -101,7 +111,7 @@ start_server() {
     sleep 1
     
     # Start the server
-    if [ ! -f "./webserv" ]; then
+    if [ ! -f "$WEBSERV_BIN" ]; then
         echo -e "${RED}Error: webserv executable not found${NC}"
         echo "Please build the project first with: make"
         return 1
@@ -113,8 +123,9 @@ start_server() {
     fi
     
     echo "Starting webserv with config: $CONFIG_FILE"
-    ./webserv "$CONFIG_FILE" > /tmp/webserv_cgi_test.log 2>&1 &
-    SERVER_PID=$!
+    echo -e "${YELLOW}Server output log: $TEST_LOG_FILE${NC}"
+    cd "$PROJECT_DIR"
+    start_server_with_logging "$CONFIG_FILE"
     SERVER_STARTED=true
     
     # Wait for server to start
@@ -123,7 +134,7 @@ start_server() {
     # Verify server is running
     if ! ps -p $SERVER_PID > /dev/null 2>&1; then
         echo -e "${RED}Failed to start server${NC}"
-        cat /tmp/webserv_cgi_test.log
+        cat "$TEST_LOG_FILE"
         return 1
     fi
     

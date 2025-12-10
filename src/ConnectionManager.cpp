@@ -121,6 +121,11 @@ void ConnectionManager::removeCgiPipes(ClientConnection* client) {
     }
 }
 
+void ConnectionManager::removeSingleCgiPipe(int pipeFd) {
+    // Remove a single pipe from the map (does not close it, caller handles that)
+    cgiPipeToClient.erase(pipeFd);
+}
+
 ClientConnection* ConnectionManager::findClientByCgiPipe(int pipeFd) {
     std::map<int, ClientConnection*>::iterator it = cgiPipeToClient.find(pipeFd);
     if (it != cgiPipeToClient.end()) {
