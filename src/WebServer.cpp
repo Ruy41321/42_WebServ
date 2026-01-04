@@ -186,8 +186,6 @@ void WebServer::run() {
         int numEvents = epoll_wait(epollFd, events, MAX_EVENTS, 1000);
         
         if (numEvents < 0) {
-            if (errno == EINTR)
-                continue;
             std::cerr << "Error in epoll_wait: " << strerror(errno) << std::endl;
             break;
         }
@@ -341,9 +339,7 @@ void WebServer::handleClientRead(int clientSocket) {
     ssize_t bytesRead = recv(clientSocket, buffer, sizeof(buffer), 0);
     
     if (bytesRead < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            return;
-        std::cerr << "recv error on fd=" << clientSocket << ": " << strerror(errno) << std::endl;
+        std::cerr << "recv error on fd=" << clientSocket << std::endl;
         connManager->removeClient(clientSocket);
         return;
     }

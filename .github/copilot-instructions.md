@@ -235,27 +235,6 @@ while (running) {
 }
 ```
 
-### Reading with EAGAIN Handling
-```cpp
-char buffer[4096];
-ssize_t bytes = recv(fd, buffer, sizeof(buffer), 0);
-
-if (bytes > 0) {
-    // Process received data
-    requestBuffer.append(buffer, bytes);
-} else if (bytes == 0) {
-    // Connection closed by client
-    closeConnection(fd);
-} else {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        // No data available, continue monitoring
-        return;
-    }
-    // Real error occurred
-    handleError(fd);
-}
-```
-
 ## Project Goals
 - Create a robust, RFC-compliant HTTP/1.0 server
 - Handle real-world scenarios and edge cases

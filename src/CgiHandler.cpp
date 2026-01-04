@@ -5,7 +5,6 @@
 #include <iostream>
 #include <ctime>
 #include <sys/stat.h>
-#include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
 
@@ -413,8 +412,6 @@ ssize_t CgiHandler::writeToCgi(ClientConnection* client) {
     
     if (written > 0)
         client->cgiBodyOffset += written;
-    else if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-        return 1;
     
     return written;
 }
@@ -428,8 +425,6 @@ ssize_t CgiHandler::readFromCgi(ClientConnection* client) {
     
     if (bytesRead > 0)
         client->cgiOutputBuffer.append(buffer, bytesRead);
-    else if (bytesRead < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-        return 1;
     
     return bytesRead;
 }
