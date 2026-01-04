@@ -5,7 +5,7 @@ WEBSERV PROJECT REQUIREMENTS
 1. ___Fatto___ Your program must use a configuration file, provided as an argument 
            on the command line, or available in a default path.
 
-2. ______ You cannot execve another web server.
+2. ___Fatto___ You cannot execve another web server.
 
 3. ___Fatto___ Your server must remain non-blocking at all times and properly handle 
            client disconnections when necessary.
@@ -29,19 +29,19 @@ WEBSERV PROJECT REQUIREMENTS
 9. ___Fatto___ When using poll() or any equivalent call, you can use every associated 
            macro or helper function (e.g., FD_SET for select()).
 
-10. __Testare___ A request to your server should never hang indefinitely.
+10. __Fatto___ A request to your server should never hang indefinitely.
 
 11. __Fatto___ Your server must be compatible with standard web browsers of your 
            choice.
 
-12. _____ NGINX may be used to compare headers and answer behaviours (pay 
+12. __Fatto___ NGINX may be used to compare headers and answer behaviours (pay 
            attention to differences between HTTP versions).
 
-13. _____ Your HTTP response status codes must be accurate.
+13. __Fatto___ Your HTTP response status codes must be accurate.
 
-14. _FATTO_ Your server must have default error pages if none are provided.
+14. ___Fatto__ Your server must have default error pages if none are provided.
 
-15. _____ You can't use fork for anything other than CGI (like PHP, or Python, 
+15. ___Fatto__ You cant use fork for anything other than CGI (like PHP, or Python, 
            and so forth).
 
 16. __Fatto___ You must be able to serve a fully static website.
@@ -50,7 +50,7 @@ WEBSERV PROJECT REQUIREMENTS
 
 18. _FATTO_ You need at least the GET, POST, and DELETE methods.
 
-19. _____ Stress test your server to ensure it remains available at all times.
+19. ___Fatto__ Stress test your server to ensure it remains available at all times.
 
 20. _Fatto_ Your server must be able to listen to multiple ports to deliver 
            different content (see Configuration file).
@@ -72,6 +72,6 @@ WEBSERV PROJECT REQUIREMENTS
            - Default file to serve when the requested resource is a directory
            - Uploading files from the clients to the server is authorized, 
              and storage location is provided
- ___Da fare cgi:___   - Execution of CGI, based on file extension
+           - Execution of CGI, based on file extension
 
 ================================================================================
