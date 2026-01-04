@@ -88,6 +88,11 @@ test: $(NAME)
 	$(TESTDIR)/test_uploads.sh
 	$(TESTDIR)/test_cgi.sh
 
+# Run valgrind memory leak test
+test_valgrind: $(NAME)
+	@echo "Running valgrind memory leak test..."
+	$(TESTDIR)/test_valgrind.sh
+
 clean:
 	rm -rf $(OBJDIR)
 
@@ -97,4 +102,4 @@ fclean: clean
 re: fclean all
 
 
-.PHONY: all clean fclean re run build_test test_config test
+.PHONY: all clean fclean re run build_test test test_valgrind
