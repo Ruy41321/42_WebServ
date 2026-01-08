@@ -26,6 +26,9 @@ TESTS_PASSED=0
 TESTS_FAILED=0
 TESTS_TOTAL=0
 
+# Source logging helper
+source "$SCRIPT_DIR/test_logging_helper.sh"
+
 # Cleanup function
 cleanup() {
     echo -e "\n${YELLOW}Cleaning up...${NC}"
@@ -38,6 +41,10 @@ cleanup() {
 setup() {
     echo -e "${BLUE}=== WebServ Test Suite ===${NC}\n"
     
+    # Setup logging for this test
+    setup_test_logging "test_server"
+    echo -e "${YELLOW}Server output log: $TEST_LOG_FILE${NC}\n"
+    
     # Create test files directory
     mkdir -p "$TEST_FILES_DIR"
     
@@ -48,11 +55,10 @@ setup() {
     echo "Small test file content" > "$TEST_FILES_DIR/small.txt"
     dd if=/dev/zero of="$TEST_FILES_DIR/large.bin" bs=1M count=2 2>/dev/null
     
-    # Start server
+    # Start server with logging
     echo -e "${YELLOW}Starting server...${NC}"
     cd "$PROJECT_DIR"
-    $WEBSERV_BIN $CONFIG_FILE > /tmp/webserv_test.log 2>&1 &
-    SERVER_PID=$!
+    start_server_with_logging "$CONFIG_FILE"
     sleep 2
     
     # Check if server started
@@ -165,12 +171,13 @@ test_post_forbidden() {
     test_result "POST / without upload indicators returns 200" "200" "$response"
 }
 
-# Test 7: POST without Content-Length
+# Test 7: POST without Content-Length (rejected unless chunked)
 test_post_no_content_length() {
     echo -e "\n${BLUE}[Test 7] POST Without Content-Length${NC}"
     
-    # Send raw HTTP request without Content-Length
-    response=$(echo -ne "POST /uploads HTTP/1.0\r\nHost: $SERVER_HOST\r\n\r\ntest data" | \
+    # Send raw HTTP/1.1 request without Content-Length (not chunked)
+    # Server requires Content-Length for POST/PUT if not chunked
+    response=$(echo -ne "POST /uploads/test_no_cl.txt HTTP/1.1\r\nHost: $SERVER_HOST\r\n\r\ntest data" | \
         nc -w 2 $SERVER_HOST $SERVER_PORT | head -1 | grep -o "[0-9]\{3\}")
     
     test_result "POST without Content-Length returns 411" "411" "$response"
@@ -193,9 +200,9 @@ test_concurrent_requests() {
     local temp_dir=$(mktemp -d)
     local pids=()
     
-    # Send 5 concurrent requests with timeout and HTTP/1.0
+    # Send 5 concurrent requests with timeout (HTTP/1.1)
     for i in {1..5}; do
-        curl -s -w "%{http_code}" -o /dev/null --http1.0 --max-time 2 "$SERVER_URL/" > "$temp_dir/response_$i.txt" &
+        curl -s -w "%{http_code}" -o /dev/null --max-time 2 "$SERVER_URL/" > "$temp_dir/response_$i.txt" &
         pids+=($!)
     done
     
@@ -225,14 +232,18 @@ test_concurrent_requests() {
     fi
 }
 
-# Test 10: Server handles connection close
+# Test 10: Server handles connection close (HTTP/1.1 keep-alive)
 test_connection_close() {
-    echo -e "\n${BLUE}[Test 10] Connection Close (HTTP/1.0)${NC}"
+    echo -e "\n${BLUE}[Test 10] Connection handling (HTTP/1.1)${NC}"
     
-    response=$(curl -s -I "$SERVER_URL/" | grep -i "connection")
+    # HTTP/1.1 should keep connection alive by default
+    # Test with explicit Connection: close header
+    response=$(curl -s -o /dev/null -w "%{http_code}" -H "Connection: close" "$SERVER_URL/")
+    test_result "HTTP/1.1 with Connection: close returns 200" "200" "$response"
     
-    # HTTP/1.0 closes connection by default
-    test_result "Server closes connection after response" "true" "true"
+    # Test keep-alive (default in HTTP/1.1)
+    response=$(curl -s -o /dev/null -w "%{http_code}" "$SERVER_URL/")
+    test_result "HTTP/1.1 keep-alive request returns 200" "200" "$response"
 }
 
 # Test 11: DELETE existing file

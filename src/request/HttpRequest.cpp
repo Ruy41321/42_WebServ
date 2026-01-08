@@ -1,25 +1,25 @@
-/**
- * HttpRequest.cpp - Main routing and validation
- * 
- * This file contains:
- * - Request dispatching and routing
- * - Request validation
- * - Method implementation checks
- * - Location matching
- */
-
 #include "../../include/HttpRequest.hpp"
 #include "../../include/HttpResponse.hpp"
+#include "../../include/CgiHandler.hpp"
+#include "../../include/StringUtils.hpp"
 #include <sstream>
 #include <iostream>
 #include <sys/stat.h>
 
-// ==================== Constructor ====================
-
-HttpRequest::HttpRequest(Config& cfg) : config(cfg) {
+HttpRequest::HttpRequest(Config& cfg) : config(cfg), cgiHandler(NULL) {
+    cgiHandler = new CgiHandler(config);
 }
 
-// ==================== Static Utilities ====================
+HttpRequest::~HttpRequest() {
+    if (cgiHandler) {
+        delete cgiHandler;
+        cgiHandler = NULL;
+    }
+}
+
+CgiHandler* HttpRequest::getCgiHandler() const {
+    return cgiHandler;
+}
 
 bool HttpRequest::isRequestComplete(const std::string& buffer) {
     return buffer.find("\r\n\r\n") != std::string::npos;
@@ -39,33 +39,26 @@ std::string HttpRequest::extractPath(const std::string& headers) {
     return path;
 }
 
-// ==================== Validation ====================
-
 bool HttpRequest::isMethodImplemented(const std::string& method) {
-    return (method == "GET" || method == "HEAD" || method == "POST" || 
-            method == "PUT" || method == "DELETE");
+    return method == "GET" || method == "HEAD" || method == "POST" || 
+           method == "PUT" || method == "DELETE";
 }
 
 bool HttpRequest::validateRequestLine(const std::string& method, const std::string& path,
                                        const std::string& version, ClientConnection* client) {
     const ServerConfig& server = config.getServer(client->serverIndex);
     
-    // Validate request line format (must have method, path, and HTTP version)
     if (method.empty() || path.empty() || version.empty()) {
         client->responseBuffer = HttpResponse::build400(&server);
         return false;
     }
     
-    // Validate HTTP version format
     if (version.find("HTTP/") != 0) {
         client->responseBuffer = HttpResponse::build400(&server);
         return false;
     }
-    
     return true;
 }
-
-// ==================== Location Helpers ====================
 
 const LocationConfig* HttpRequest::findBestLocation(const std::string& path, const ServerConfig& server) {
     const LocationConfig* bestMatch = NULL;
@@ -74,9 +67,12 @@ const LocationConfig* HttpRequest::findBestLocation(const std::string& path, con
     for (size_t i = 0; i < server.locations.size(); ++i) {
         const LocationConfig& loc = server.locations[i];
         if (path.find(loc.path) == 0) {
-            size_t matchLength = loc.path.length();
-            if (matchLength > bestMatchLength) {
-                bestMatchLength = matchLength;
+            bool validMatch = (path.length() == loc.path.length()) ||
+                             (loc.path[loc.path.length() - 1] == '/') ||
+                             (path.length() > loc.path.length() && path[loc.path.length()] == '/');
+            
+            if (validMatch && loc.path.length() > bestMatchLength) {
+                bestMatchLength = loc.path.length();
                 bestMatch = &loc;
             }
         }
@@ -85,53 +81,33 @@ const LocationConfig* HttpRequest::findBestLocation(const std::string& path, con
 }
 
 std::string HttpRequest::getPathRelativeToLocation(const std::string& path, const LocationConfig* location) {
-    if (!location || location->path.empty() || location->path == "/") {
+    if (!location || location->path.empty() || location->path == "/")
         return path;
-    }
     
-    // Remove the location prefix from the path
-    std::string locPath = location->path;
-    if (path.find(locPath) == 0) {
-        std::string relative = path.substr(locPath.length());
-        // If relative path is empty, return "/" for directory
-        if (relative.empty()) {
-            return "/";
-        }
-        return relative;
+    if (path.find(location->path) == 0) {
+        std::string relative = path.substr(location->path.length());
+        return relative.empty() ? "/" : relative;
     }
-    
     return path;
 }
 
 std::string HttpRequest::buildFilePath(const std::string& path, const ServerConfig& server,
                                         const LocationConfig* location) {
-    std::string root = server.root;
-    if (location && !location->root.empty()) {
-        root = location->root;
-    }
-    
-    // Get path relative to location
-    std::string relativePath = getPathRelativeToLocation(path, location);
-    
-    return root + relativePath;
+    std::string root = (location && !location->root.empty()) ? location->root : server.root;
+    return root + getPathRelativeToLocation(path, location);
 }
 
 bool HttpRequest::isMethodAllowed(const std::string& method, const std::string& path, size_t serverIndex) {
     const ServerConfig& server = config.getServer(serverIndex);
     const LocationConfig* bestMatch = findBestLocation(path, server);
     
-    // If no location match, allow by default
-    if (!bestMatch) {
+    if (!bestMatch)
         return true;
-    }
     
-    // Check if method is in allowed list
     for (size_t i = 0; i < bestMatch->allowMethods.size(); ++i) {
-        if (bestMatch->allowMethods[i] == method) {
+        if (bestMatch->allowMethods[i] == method)
             return true;
-        }
     }
-    
     return false;
 }
 
@@ -139,97 +115,231 @@ bool HttpRequest::checkRedirect(const std::string& path, size_t serverIndex,
                                 std::string& redirectUrl, int& statusCode) {
     const ServerConfig& server = config.getServer(serverIndex);
     
-    // Check each location for redirect
     for (size_t i = 0; i < server.locations.size(); ++i) {
         const LocationConfig& loc = server.locations[i];
-        
-        // Exact path match for redirect
         if (loc.path == path && !loc.redirect.empty()) {
-            // Parse redirect string (format: "301 /new-page" or "302 /")
             std::istringstream iss(loc.redirect);
             iss >> statusCode >> redirectUrl;
             return true;
         }
     }
-    
     return false;
 }
 
-// ==================== Main Request Handler ====================
+bool HttpRequest::checkHostHeader(const std::string& headers, const std::string& version) {
+    if (version != "HTTP/1.1")
+        return true;
+    
+    std::string headersLower = StringUtils::toLower(headers);
+    return headersLower.find("host:") != std::string::npos;
+}
 
 void HttpRequest::handleRequest(ClientConnection* client) {
-    // Check if headers are complete
-    size_t headerEnd = client->requestBuffer.find("\r\n\r\n");
-    if (headerEnd == std::string::npos) {
-        return;  // Headers not complete yet
-    }
+    if (client->state == ClientConnection::CGI_RUNNING)
+        return;
     
-    // Extract headers
+    size_t headerEnd = client->requestBuffer.find("\r\n\r\n");
+    if (headerEnd == std::string::npos)
+        return;
+    
     std::string headers = client->requestBuffer.substr(0, headerEnd);
     size_t bodyStart = headerEnd + 4;
     
-    // Parse request line
     std::istringstream iss(headers);
     std::string method, path, version;
     iss >> method >> path >> version;
     
     std::cout << "Request: " << method << " " << path << " " << version << std::endl;
     
-    // Validate request line
-    if (!validateRequestLine(method, path, version, client)) {
+    if (!validateRequestLine(method, path, version, client))
+        return;
+    
+    if (!checkHostHeader(headers, version)) {
+        const ServerConfig& server = config.getServer(client->serverIndex);
+        client->responseBuffer = HttpResponse::build400(&server);
         return;
     }
     
-    // Check for redirect first
     std::string redirectUrl;
     int statusCode;
     if (checkRedirect(path, client->serverIndex, redirectUrl, statusCode)) {
-        if (statusCode == 301) {
-            client->responseBuffer = HttpResponse::build301(redirectUrl);
-        } else if (statusCode == 302) {
-            client->responseBuffer = HttpResponse::build302(redirectUrl);
-        }
+        client->responseBuffer = (statusCode == 301) 
+            ? HttpResponse::build301(redirectUrl) 
+            : HttpResponse::build302(redirectUrl);
         return;
     }
     
-    // Check if method is implemented
     if (!isMethodImplemented(method)) {
         const ServerConfig& server = config.getServer(client->serverIndex);
         client->responseBuffer = HttpResponse::build501(&server);
         return;
     }
     
-    // Check if method is allowed for this location
     if (!isMethodAllowed(method, path, client->serverIndex)) {
         const ServerConfig& server = config.getServer(client->serverIndex);
         client->responseBuffer = HttpResponse::build405(&server);
         return;
     }
     
-    // For POST/PUT requests, check Content-Length against max body size EARLY
-    if (method == "POST" || method == "PUT") {
-        size_t contentLength;
-        if (getContentLength(headers, contentLength)) {
-            const ServerConfig& server = config.getServer(client->serverIndex);
-            if (contentLength > server.clientMaxBodySize) {
-                std::cout << "Body size " << contentLength << " exceeds limit " 
-                          << server.clientMaxBodySize << std::endl;
-                client->responseBuffer = HttpResponse::build413(&server);
-                return;
+    if ((method == "POST" || method == "PUT") && !checkBodySizeLimit(client, method, path, headers, bodyStart))
+        return;
+    
+    if ((method == "GET" || method == "POST") && handleCgiRequest(client, method, path, headers, bodyStart))
+        return;
+    
+    if (method == "GET") handleGet(client, path);
+    else if (method == "HEAD") handleHead(client, path);
+    else if (method == "POST") handlePost(client, path, headers, bodyStart);
+    else if (method == "PUT") handlePut(client, path, headers, bodyStart);
+    else if (method == "DELETE") handleDelete(client, path);
+}
+
+bool HttpRequest::checkBodySizeLimit(ClientConnection* client, const std::string& method,
+                                     const std::string& path, const std::string& headers, size_t bodyStart) {
+    (void)method;
+    const ServerConfig& server = config.getServer(client->serverIndex);
+    const LocationConfig* location = findBestLocation(path, server);
+    
+    size_t maxBodySize = (location && location->hasClientMaxBodySize) 
+        ? location->clientMaxBodySize 
+        : server.clientMaxBodySize;
+    
+    if (maxBodySize == 0)
+        return true;
+    
+    size_t actualBodySize = 0;
+    size_t contentLength;
+    
+    if (isChunkedTransferEncoding(headers)) {
+        std::string body = client->requestBuffer.substr(bodyStart);
+        actualBodySize = unchunkBody(body).length();
+    } else if (getContentLength(headers, contentLength)) {
+        actualBodySize = contentLength;
+    }
+    
+    if (actualBodySize > maxBodySize) {
+        std::cout << "Body size " << actualBodySize << " exceeds limit " << maxBodySize << std::endl;
+        client->responseBuffer = HttpResponse::build413(&server);
+        return false;
+    }
+    return true;
+}
+
+bool HttpRequest::handleCgiRequest(ClientConnection* client, const std::string& method,
+                                   const std::string& path, const std::string& headers,
+                                   size_t bodyStart) {
+    const ServerConfig& server = config.getServer(client->serverIndex);
+    const LocationConfig* location = findBestLocation(path, server);
+    
+    if (!cgiHandler->isCgiRequest(path, location))
+        return false;
+    
+    std::cout << "CGI request detected for: " << path << std::endl;
+    
+    std::string scriptPath = buildFilePath(path, server, location);
+    
+    size_t queryPos = scriptPath.find('?');
+    if (queryPos != std::string::npos)
+        scriptPath = scriptPath.substr(0, queryPos);
+    
+    if (location) {
+        for (size_t i = 0; i < location->cgiExt.size(); ++i) {
+            size_t extPos = scriptPath.find(location->cgiExt[i]);
+            if (extPos != std::string::npos) {
+                size_t afterExt = extPos + location->cgiExt[i].length();
+                if (afterExt < scriptPath.length() && scriptPath[afterExt] == '/')
+                    scriptPath = scriptPath.substr(0, afterExt);
+                break;
             }
         }
     }
     
-    // Route to appropriate handler
-    if (method == "GET") {
-        handleGet(client, path);
-    } else if (method == "HEAD") {
-        handleHead(client, path);
-    } else if (method == "POST") {
-        handlePost(client, path, headers, bodyStart);
-    } else if (method == "PUT") {
-        handlePut(client, path, headers, bodyStart);
-    } else if (method == "DELETE") {
-        handleDelete(client, path);
+    struct stat fileStat;
+    if (stat(scriptPath.c_str(), &fileStat) != 0) {
+        std::cerr << "CGI script not found: " << scriptPath << std::endl;
+        client->responseBuffer = HttpResponse::build404(&server);
+        return true;
     }
+    
+    std::string body;
+    if (method == "POST") {
+        body = extractCgiBody(client, headers, bodyStart);
+        if (body.empty() && bodyStart < client->requestBuffer.length())
+            return true;
+    }
+    
+    if (!cgiHandler->startCgi(client, method, path, headers, body, location, scriptPath)) {
+        client->responseBuffer = HttpResponse::build500("CGI execution failed", &server);
+        return true;
+    }
+    return true;
+}
+
+std::string HttpRequest::extractCgiBody(ClientConnection* client, const std::string& headers, size_t bodyStart) {
+    size_t contentLength = 0;
+    bool hasContentLength = getContentLength(headers, contentLength);
+    bool isChunked = isChunkedTransferEncoding(headers);
+    
+    if (isChunked) {
+        size_t chunkEnd = client->requestBuffer.find("0\r\n\r\n", bodyStart);
+        if (chunkEnd == std::string::npos)
+            return "";
+        return unchunkBody(client->requestBuffer.substr(bodyStart, chunkEnd + 5 - bodyStart));
+    }
+    
+    if (hasContentLength) {
+        size_t bodyReceived = client->requestBuffer.length() - bodyStart;
+        if (bodyReceived < contentLength)
+            return "";
+        return client->requestBuffer.substr(bodyStart, contentLength);
+    }
+    return "";
+}
+
+bool HttpRequest::isChunkedTransferEncoding(const std::string& headers) {
+    std::string headersLower = StringUtils::toLower(headers);
+    size_t pos = headersLower.find("transfer-encoding:");
+    if (pos == std::string::npos)
+        return false;
+    
+    size_t lineEnd = headersLower.find("\r\n", pos + 18);
+    if (lineEnd == std::string::npos)
+        lineEnd = headersLower.length();
+    
+    return headersLower.substr(pos + 18, lineEnd - pos - 18).find("chunked") != std::string::npos;
+}
+
+std::string HttpRequest::unchunkBody(const std::string& chunkedBody) {
+    std::string result;
+    size_t pos = 0;
+    
+    while (pos < chunkedBody.length()) {
+        size_t lineEnd = chunkedBody.find("\r\n", pos);
+        if (lineEnd == std::string::npos)
+            break;
+        
+        std::string sizeStr = chunkedBody.substr(pos, lineEnd - pos);
+        size_t semicolon = sizeStr.find(';');
+        if (semicolon != std::string::npos)
+            sizeStr = sizeStr.substr(0, semicolon);
+        
+        char* endPtr;
+        unsigned long chunkSize = strtoul(sizeStr.c_str(), &endPtr, 16);
+        
+        if (chunkSize == 0)
+            break;
+        
+        pos = lineEnd + 2;
+        
+        if (pos + chunkSize <= chunkedBody.length()) {
+            result.append(chunkedBody, pos, chunkSize);
+            pos += chunkSize;
+        } else {
+            break;
+        }
+        
+        if (pos + 2 <= chunkedBody.length())
+            pos += 2;
+    }
+    return result;
 }

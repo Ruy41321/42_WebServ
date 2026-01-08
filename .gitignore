@@ -18,3 +18,5 @@ webserv
 to_do.txt
 www/uploads/*
 www/site2/submissions/*
+.test_logs
+.redirect_enabled

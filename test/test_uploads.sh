@@ -10,7 +10,10 @@ NC='\033[0m' # No Color
 
 # Configuration
 SERVER_URL="http://127.0.0.1:8080"
-UPLOAD_DIR="./www/uploads"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+WEBSERV_BIN="$PROJECT_DIR/webserv"
+UPLOAD_DIR="$PROJECT_DIR/www/uploads"
 TEST_DIR="/tmp/webserv_post_test"
 PASSED=0
 FAILED=0
@@ -18,6 +21,12 @@ TOTAL=0
 
 # Create test directory
 mkdir -p "$TEST_DIR"
+
+# Source logging helper
+source "$SCRIPT_DIR/test_logging_helper.sh"
+
+# Setup logging for this test
+setup_test_logging "test_uploads"
 
 # Cleanup function
 cleanup() {
@@ -77,13 +86,14 @@ get_status() {
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}   WebServ POST Functionality Tests    ${NC}"
 echo -e "${BLUE}========================================${NC}\n"
+echo -e "${YELLOW}Server output log: $TEST_LOG_FILE${NC}\n"
 
 # Start server
 echo -e "${YELLOW}Starting server...${NC}"
 pkill -9 webserv 2>/dev/null
 sleep 1
-./webserv config/default.conf > /tmp/webserv_test.log 2>&1 &
-SERVER_PID=$!
+cd "$PROJECT_DIR"
+start_server_with_logging "config/default.conf"
 sleep 2
 
 # Verify server is running
@@ -99,7 +109,7 @@ echo -e "${YELLOW}=== SECTION 1: Basic POST Operations ===${NC}"
 
 # Test 1.1: Simple binary upload
 echo "Hello, this is a test file!" > "$TEST_DIR/simple.txt"
-RESPONSE=$(curl -s -i -X POST "$SERVER_URL/uploads/test_simple.txt" \
+RESPONSE=$(curl -s -i --max-time 2 -X POST "$SERVER_URL/uploads/test_simple.txt" \
     -H "Content-Type: application/octet-stream" \
     --data-binary @"$TEST_DIR/simple.txt" 2>&1)
 STATUS=$(get_status "$RESPONSE")
@@ -129,7 +139,7 @@ with open('$TEST_DIR/test.png', 'wb') as f:
     f.write(create_png())
 " 2>/dev/null
 
-RESPONSE=$(curl -s -i -X POST "$SERVER_URL/uploads/test_image.png" \
+RESPONSE=$(curl -s -i --max-time 2 -X POST "$SERVER_URL/uploads/test_image.png" \
     -H "Content-Type: image/png" \
     --data-binary @"$TEST_DIR/test.png" 2>&1)
 STATUS=$(get_status "$RESPONSE")
@@ -139,7 +149,7 @@ print_result "1.3 Binary PNG upload" "201" "$STATUS"
 echo -e "\n${YELLOW}=== SECTION 2: Multipart Form Data ===${NC}"
 
 # Test 2.1: Multipart upload with curl -F
-RESPONSE=$(curl -s -i -X POST "$SERVER_URL/uploads/" \
+RESPONSE=$(curl -s -i --max-time 2 -X POST "$SERVER_URL/uploads/" \
     -F "file=@$TEST_DIR/simple.txt;filename=multipart_test.txt" 2>&1)
 STATUS=$(get_status "$RESPONSE")
 print_result "2.1 Multipart form upload" "201" "$STATUS"
@@ -147,7 +157,7 @@ print_result "2.1 Multipart form upload" "201" "$STATUS"
 # Test 2.2: Check multipart extracts content correctly (not boundaries)
 # Create a file with known content
 echo "UNIQUE_CONTENT_12345" > "$TEST_DIR/multipart_content.txt"
-RESPONSE=$(curl -s -i -X POST "$SERVER_URL/uploads/" \
+RESPONSE=$(curl -s -i --max-time 2 -X POST "$SERVER_URL/uploads/" \
     -F "file=@$TEST_DIR/multipart_content.txt;filename=content_check.txt" 2>&1)
 
 # Find the uploaded file and check content
@@ -164,7 +174,7 @@ else
 fi
 
 # Test 2.3: Multipart with filename extraction
-RESPONSE=$(curl -s -i -X POST "$SERVER_URL/uploads/" \
+RESPONSE=$(curl -s -i --max-time 2 -X POST "$SERVER_URL/uploads/" \
     -F "file=@$TEST_DIR/simple.txt;filename=extracted_name.txt" 2>&1)
 check_contains "2.3 Filename extracted from multipart" "$RESPONSE" "extracted_name"
 
@@ -172,7 +182,7 @@ check_contains "2.3 Filename extracted from multipart" "$RESPONSE" "extracted_na
 echo -e "\n${YELLOW}=== SECTION 3: Filename Sanitization ===${NC}"
 
 # Test 3.1: Path traversal attempt (../)
-RESPONSE=$(curl -s -i -X POST "$SERVER_URL/uploads/../../../etc/passwd" \
+RESPONSE=$(curl -s -i --max-time 2 -X POST "$SERVER_URL/uploads/../../../etc/passwd" \
     -H "Content-Type: text/plain" \
     -d "malicious content" 2>&1)
 # Should either sanitize the path or reject
@@ -190,7 +200,7 @@ else
 fi
 
 # Test 3.2: Filename with special characters via Content-Disposition
-RESPONSE=$(curl -s -i -X POST "$SERVER_URL/uploads/" \
+RESPONSE=$(curl -s -i --max-time 2 -X POST "$SERVER_URL/uploads/" \
     -H "Content-Disposition: attachment; filename=\"test<script>alert.txt\"" \
     -H "Content-Type: text/plain" \
     -d "test content" 2>&1)
@@ -209,7 +219,7 @@ else
 fi
 
 # Test 3.3: Null byte injection attempt
-RESPONSE=$(curl -s -i -X POST "$SERVER_URL/uploads/test%00.txt" \
+RESPONSE=$(curl -s -i --max-time 2 -X POST "$SERVER_URL/uploads/test%00.txt" \
     -H "Content-Type: text/plain" \
     -d "null byte test" 2>&1)
 # Should either sanitize or reject
@@ -227,7 +237,7 @@ echo -e "\n${YELLOW}=== SECTION 4: File Collision Handling ===${NC}"
 rm -f "$UPLOAD_DIR"/collision_test* 2>/dev/null
 
 # Test 4.1: First upload (should succeed)
-RESPONSE1=$(curl -s -i -X POST "$SERVER_URL/uploads/" \
+RESPONSE1=$(curl -s -i --max-time 2 -X POST "$SERVER_URL/uploads/" \
     -H "Content-Disposition: attachment; filename=\"collision_test.txt\"" \
     -H "Content-Type: text/plain" \
     -d "First upload content" 2>&1)
@@ -235,7 +245,7 @@ STATUS1=$(get_status "$RESPONSE1")
 print_result "4.1 First upload succeeds" "201" "$STATUS1"
 
 # Test 4.2: Second upload with same name (should create unique filename)
-RESPONSE2=$(curl -s -i -X POST "$SERVER_URL/uploads/" \
+RESPONSE2=$(curl -s -i --max-time 2 -X POST "$SERVER_URL/uploads/" \
     -H "Content-Disposition: attachment; filename=\"collision_test.txt\"" \
     -H "Content-Type: text/plain" \
     -d "Second upload content" 2>&1)
@@ -266,27 +276,27 @@ fi
 # ==================== SECTION 5: Body Size Limits ====================
 echo -e "\n${YELLOW}=== SECTION 5: Body Size Limits ===${NC}"
 
-# Test 5.1: Upload within size limit (1MB for port 8080)
-dd if=/dev/zero bs=1024 count=100 2>/dev/null > "$TEST_DIR/small.bin"
-RESPONSE=$(curl -s -i -X POST "$SERVER_URL/uploads/small_file.bin" \
+# Test 5.1: Upload within size limit (10KB limit on /uploads)
+dd if=/dev/zero bs=1024 count=5 2>/dev/null > "$TEST_DIR/small.bin"
+RESPONSE=$(curl -s -i --max-time 2 -X POST "$SERVER_URL/uploads/small_file.bin" \
     -H "Content-Type: application/octet-stream" \
     --data-binary @"$TEST_DIR/small.bin" 2>&1)
 STATUS=$(get_status "$RESPONSE")
-print_result "5.1 Upload within limit (100KB)" "201" "$STATUS"
+print_result "5.1 Upload within limit (5KB)" "201" "$STATUS"
 
-# Test 5.2: Upload exceeding size limit (should fail with 413)
-dd if=/dev/zero bs=1024 count=2000 2>/dev/null > "$TEST_DIR/large.bin"
-RESPONSE=$(curl -s -i -X POST "$SERVER_URL/uploads/large_file.bin" \
+# Test 5.2: Upload exceeding size limit (10KB on /uploads, should fail with 413)
+dd if=/dev/zero bs=1024 count=15 2>/dev/null > "$TEST_DIR/large.bin"
+RESPONSE=$(curl -s -i --max-time 2 -X POST "$SERVER_URL/uploads/large_file.bin" \
     -H "Content-Type: application/octet-stream" \
     --data-binary @"$TEST_DIR/large.bin" 2>&1)
 STATUS=$(get_status "$RESPONSE")
-print_result "5.2 Reject upload over limit (2MB)" "413" "$STATUS"
+print_result "5.2 Reject upload over limit (15KB > 10KB)" "413" "$STATUS"
 
 # ==================== SECTION 6: Missing Headers ====================
 echo -e "\n${YELLOW}=== SECTION 6: Error Handling ===${NC}"
 
 # Test 6.1: POST without Content-Length (should fail)
-RESPONSE=$(curl -s -i -X POST "$SERVER_URL/uploads/test.txt" \
+RESPONSE=$(curl -s -i --max-time 2 -X POST "$SERVER_URL/uploads/test.txt" \
     -H "Content-Type: text/plain" \
     -H "Transfer-Encoding: chunked" \
     -d "test" 2>&1)
@@ -300,7 +310,7 @@ else
 fi
 
 # Test 6.2: POST to location without upload_store (valid POST data handler)
-RESPONSE=$(curl -s -i -X POST "$SERVER_URL/static/test.txt" \
+RESPONSE=$(curl -s -i --max-time 2 -X POST "$SERVER_URL/static/test.txt" \
     -H "Content-Type: text/plain" \
     -d "test" 2>&1)
 STATUS=$(get_status "$RESPONSE")
@@ -315,12 +325,12 @@ fi
 echo -e "\n${YELLOW}=== SECTION 7: HEAD Method ===${NC}"
 
 # Test 7.1: HEAD request on existing file
-RESPONSE=$(curl -s -i -X HEAD "$SERVER_URL/index.html" 2>&1)
+RESPONSE=$(curl -s -i --max-time 2 -X HEAD "$SERVER_URL/index.html" 2>&1)
 STATUS=$(get_status "$RESPONSE")
 print_result "7.1 HEAD request returns 200" "200" "$STATUS"
 
 # Test 7.2: HEAD response has no body
-BODY_LENGTH=$(curl -s -X HEAD "$SERVER_URL/index.html" 2>&1 | wc -c)
+BODY_LENGTH=$(curl -s --max-time 2 -X HEAD "$SERVER_URL/index.html" 2>&1 | wc -c)
 if [ "$BODY_LENGTH" -eq 0 ]; then
     print_result "7.2 HEAD response has no body" "empty" "empty"
 else
@@ -328,7 +338,7 @@ else
 fi
 
 # Test 7.3: HEAD includes Content-Length header
-RESPONSE=$(curl -s -i -X HEAD "$SERVER_URL/index.html" 2>&1)
+RESPONSE=$(curl -s -i --max-time 2 -X HEAD "$SERVER_URL/index.html" 2>&1)
 if echo "$RESPONSE" | grep -qi "Content-Length:"; then
     print_result "7.3 HEAD includes Content-Length" "yes" "yes"
 else
@@ -336,7 +346,7 @@ else
 fi
 
 # Test 7.4: HEAD on non-existent file returns 404
-RESPONSE=$(curl -s -i -X HEAD "$SERVER_URL/nonexistent.html" 2>&1)
+RESPONSE=$(curl -s -i --max-time 2 -X HEAD "$SERVER_URL/nonexistent.html" 2>&1)
 STATUS=$(get_status "$RESPONSE")
 print_result "7.4 HEAD on missing file returns 404" "404" "$STATUS"
 
@@ -347,7 +357,7 @@ echo -e "\n${YELLOW}=== SECTION 8: PUT Method ===${NC}"
 rm -f "$UPLOAD_DIR"/put_*.txt "$UPLOAD_DIR"/put_*.bin 2>/dev/null
 
 # Test 8.1: PUT creates new file (201 Created)
-RESPONSE=$(curl -s -i -X PUT "$SERVER_URL/uploads/put_new_file.txt" \
+RESPONSE=$(curl -s -i --max-time 2 -X PUT "$SERVER_URL/uploads/put_new_file.txt" \
     -H "Content-Type: text/plain" \
     -d "PUT new file content" 2>&1)
 STATUS=$(get_status "$RESPONSE")
@@ -366,7 +376,7 @@ else
 fi
 
 # Test 8.3: PUT replaces existing file (204 No Content)
-RESPONSE=$(curl -s -i -X PUT "$SERVER_URL/uploads/put_new_file.txt" \
+RESPONSE=$(curl -s -i --max-time 2 -X PUT "$SERVER_URL/uploads/put_new_file.txt" \
     -H "Content-Type: text/plain" \
     -d "REPLACED content" 2>&1)
 STATUS=$(get_status "$RESPONSE")
@@ -389,7 +399,7 @@ echo "Creating binary test file..."
 dd if=/dev/urandom bs=1024 count=10 2>/dev/null > "$TEST_DIR/put_binary.bin"
 ORIGINAL_MD5=$(md5sum "$TEST_DIR/put_binary.bin" | awk '{print $1}')
 
-RESPONSE=$(curl -s -i -X PUT "$SERVER_URL/uploads/put_binary.bin" \
+RESPONSE=$(curl -s -i --max-time 2 -X PUT "$SERVER_URL/uploads/put_binary.bin" \
     -H "Content-Type: application/octet-stream" \
     --data-binary @"$TEST_DIR/put_binary.bin" 2>&1)
 STATUS=$(get_status "$RESPONSE")
@@ -408,14 +418,14 @@ else
 fi
 
 # Test 8.7: PUT to location without PUT permission (405)
-RESPONSE=$(curl -s -i -X PUT "$SERVER_URL/static/test.txt" \
+RESPONSE=$(curl -s -i --max-time 2 -X PUT "$SERVER_URL/static/test.txt" \
     -H "Content-Type: text/plain" \
     -d "Should be rejected" 2>&1)
 STATUS=$(get_status "$RESPONSE")
 print_result "8.7 PUT without permission returns 405" "405" "$STATUS"
 
 # Test 8.8: PUT with path traversal attempt
-RESPONSE=$(curl -s -i -X PUT "$SERVER_URL/uploads/../../../tmp/evil.txt" \
+RESPONSE=$(curl -s -i --max-time 2 -X PUT "$SERVER_URL/uploads/../../../tmp/evil.txt" \
     -H "Content-Type: text/plain" \
     -d "Path traversal attack" 2>&1)
 STATUS=$(get_status "$RESPONSE")
@@ -432,14 +442,14 @@ fi
 
 # Test 8.9: PUT exceeding body size limit (413)
 dd if=/dev/zero bs=1024 count=2000 2>/dev/null > "$TEST_DIR/put_large.bin"
-RESPONSE=$(curl -s -i -X PUT "$SERVER_URL/uploads/put_large.bin" \
+RESPONSE=$(curl -s -i --max-time 2 -X PUT "$SERVER_URL/uploads/put_large.bin" \
     -H "Content-Type: application/octet-stream" \
     --data-binary @"$TEST_DIR/put_large.bin" 2>&1)
 STATUS=$(get_status "$RESPONSE")
 print_result "8.9 PUT over limit returns 413" "413" "$STATUS"
 
 # Test 8.10: PUT empty file
-RESPONSE=$(curl -s -i -X PUT "$SERVER_URL/uploads/put_empty.txt" \
+RESPONSE=$(curl -s -i --max-time 2 -X PUT "$SERVER_URL/uploads/put_empty.txt" \
     -H "Content-Type: text/plain" \
     -d "" 2>&1)
 STATUS=$(get_status "$RESPONSE")

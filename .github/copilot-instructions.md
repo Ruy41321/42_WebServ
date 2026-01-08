@@ -20,7 +20,7 @@ This is a C++98 HTTP web server implementation for the 42 school curriculum. The
 - No checking `errno` after read/write operations to adjust behavior
 
 ### HTTP Protocol Implementation
-- Support HTTP/1.0 protocol
+- Support HTTP/1.1 protocol
 - Implement GET, POST, and DELETE methods
 - Accurate HTTP response status codes (200, 404, 500, etc.)
 - Handle chunked transfer encoding (un-chunk before passing to CGI)
@@ -232,27 +232,6 @@ while (running) {
     
     handleReadyFds(read_fds, write_fds);
     handleTimeouts();
-}
-```
-
-### Reading with EAGAIN Handling
-```cpp
-char buffer[4096];
-ssize_t bytes = recv(fd, buffer, sizeof(buffer), 0);
-
-if (bytes > 0) {
-    // Process received data
-    requestBuffer.append(buffer, bytes);
-} else if (bytes == 0) {
-    // Connection closed by client
-    closeConnection(fd);
-} else {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        // No data available, continue monitoring
-        return;
-    }
-    // Real error occurred
-    handleError(fd);
 }
 ```
 
